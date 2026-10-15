@@ -9,7 +9,8 @@ job title, and runs automatically from **live HubSpot webhooks**.
 It is written as plain code, with no no-code tools. It is deployed on Railway and fully
 tested: 141 tests run against mocked APIs, so the tests never spend real Forager credits.
 
-**Live service:** https://forager-hubspot-enrichment-production.up.railway.app/health
+**Live service:** https://forager-hubspot-enrichment-production.up.railway.app/health  
+**Video walkthrough (7 min):** https://drive.google.com/file/d/1kZjMuisse5vTYHkpymO73CdBzZgBJFBD/view?usp=sharing
 
 | Brief requirement | Where it lives |
 |---|---|

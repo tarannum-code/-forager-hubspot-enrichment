@@ -1,0 +1,57 @@
+{
+  "id": 9101,
+  "full_name": "JANE DOE-SMITH",
+  "first_name": "JANE",
+  "last_name": "DOE-SMITH",
+  "photo": "https://cdn.example.com/p/9101.jpg",
+  "gender": "female",
+  "headline": "VP Engineering at Acme AI",
+  "description": "Engineering leader. Previously built data platforms at scale.",
+  "skills": [{"name": "Python"}, {"name": "Distributed Systems"}],
+  "location": {"id": 1, "name": "San Francisco Bay Area", "osm_locations": []},
+  "linkedin_info": {
+    "public_identifier": "jane-doe-smith",
+    "industry": {"id": 4, "name": "Software Development"},
+    "public_profile_url": "https://www.linkedin.com/in/jane-doe-smith"
+  },
+  "roles": [
+    {
+      "id": 1, "role_title": "Senior Engineer", "start_date": "2016-01-01", "end_date": "2022-02-28",
+      "is_current": false,
+      "organization": {"id": 600, "name": "Old Co", "domain": "oldco.com", "linkedin_info": null},
+      "organization_name": "Old Co"
+    },
+    {
+      "id": 2, "role_title": "VP of Engineering", "start_date": "2022-03-01", "end_date": null,
+      "is_current": true,
+      "organization": {
+        "id": 501, "name": "Acme AI", "domain": "acmeai.com",
+        "linkedin_info": {
+          "public_identifier": "acme-ai", "industry": null,
+          "public_profile_url": "https://www.linkedin.com/company/acme-ai/"
+        }
+      },
+      "organization_name": "Acme AI"
+    }
+  ],
+  "educations": [
+    {
+      "id": 1, "school_name": "State University", "degree": "BSc",
+      "field_of_study": "Computer Science", "start_date": "2008-09-01", "end_date": "2012-06-01",
+      "organization": null
+    }
+  ],
+  "certifications": [],
+  "courses": [],
+  "honors": [],
+  "languages": [
+    {"id": 1, "name": "English", "proficiency": "Native"},
+    {"id": 2, "name": "Spanish", "proficiency": null}
+  ],
+  "organizations": [],
+  "patents": [],
+  "publications": [],
+  "test_scores": [],
+  "projects": [],
+  "volunteering": []
+}

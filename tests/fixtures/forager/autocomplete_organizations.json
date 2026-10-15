@@ -1,0 +1,7 @@
+{
+  "results": [
+    {"id": "501", "text": "Acme AI - acmeai.com"},
+    {"id": "502", "text": "Acme AI Labs - acmeailabs.io"}
+  ],
+  "pagination": {"more": false}
+}

@@ -1,0 +1,104 @@
+{
+  "search_results": [
+    {
+      "id": 7001,
+      "role_title": "VP of Engineering",
+      "start_date": "2022-03-01",
+      "end_date": null,
+      "duration": "4 years",
+      "description": null,
+      "is_current": true,
+      "organization": {
+        "id": 501, "name": "Acme AI", "legal_name": "Acme AI, Inc.", "domain": "acmeai.com",
+        "domain_rank": 1520, "keywords": [], "addresses": [], "date_updated": "2026-09-30T10:00:00Z",
+        "location": {"id": 9001, "name": "San Francisco, California, United States", "osm_locations": []},
+        "finance_info": {"revenue": 3700000000},
+        "linkedin_info": {
+          "public_identifier": "acme-ai",
+          "industry": {"id": 4, "name": "Software Development"},
+          "public_profile_url": "https://www.linkedin.com/company/acme-ai/"
+        }
+      },
+      "person": {
+        "id": 9101, "full_name": "JANE DOE-SMITH", "first_name": "JANE", "last_name": "DOE-SMITH",
+        "photo": null, "gender": null,
+        "headline": "VP Engineering at Acme AI",
+        "description": "Builds teams that ship.",
+        "skills": [{"name": "Python"}, {"name": "Leadership"}],
+        "location": {"id": 1, "name": "San Francisco Bay Area", "osm_locations": []},
+        "linkedin_info": {
+          "public_identifier": "jane-doe-smith", "industry": null,
+          "public_profile_url": "https://www.linkedin.com/in/jane-doe-smith"
+        },
+        "date_updated": "2026-09-01T00:00:00Z"
+      },
+      "date_updated": "2026-09-01T00:00:00Z"
+    },
+    {
+      "id": 7002,
+      "role_title": "Engineering Intern",
+      "is_current": true,
+      "organization": {
+        "id": 501, "name": "Acme AI", "legal_name": "Acme AI, Inc.", "domain": "acmeai.com",
+        "keywords": [], "addresses": [], "date_updated": "2026-09-30T10:00:00Z",
+        "location": {"id": 9001, "name": "San Francisco", "osm_locations": []},
+        "finance_info": {"revenue": null},
+        "linkedin_info": {
+          "public_identifier": "acme-ai", "industry": null,
+          "public_profile_url": "https://www.linkedin.com/company/acme-ai/"
+        }
+      },
+      "person": {
+        "id": 9102, "full_name": "Sam Lee", "first_name": "Sam", "last_name": "Lee", "skills": [],
+        "location": {"id": 2, "name": "Austin, Texas, United States", "osm_locations": []},
+        "linkedin_info": {
+          "public_identifier": "sam-lee-123", "industry": null,
+          "public_profile_url": "https://www.linkedin.com/in/sam-lee-123"
+        },
+        "date_updated": "2026-09-01T00:00:00Z"
+      },
+      "date_updated": "2026-09-01T00:00:00Z"
+    },
+    {
+      "id": 7003,
+      "role_title": "MVP Program Lead",
+      "is_current": true,
+      "organization": {
+        "id": 501, "name": "Acme AI", "legal_name": "Acme AI, Inc.", "domain": "acmeai.com",
+        "keywords": [], "addresses": [], "location": null, "finance_info": null,
+        "linkedin_info": null, "date_updated": "2026-09-30T10:00:00Z"
+      },
+      "person": {
+        "id": 9103, "full_name": "Ann Ray", "first_name": "Ann", "last_name": "Ray", "skills": [],
+        "location": null,
+        "linkedin_info": {
+          "public_identifier": "ann-ray", "industry": null,
+          "public_profile_url": "https://www.linkedin.com/in/ann-ray"
+        },
+        "date_updated": "2026-09-01T00:00:00Z"
+      },
+      "date_updated": "2026-09-01T00:00:00Z"
+    },
+    {
+      "id": 7004,
+      "role_title": "Head of Product",
+      "is_current": true,
+      "organization": {
+        "id": 777, "name": "Other Corp", "legal_name": "Other Corp", "domain": "othercorp.com",
+        "keywords": [], "addresses": [], "location": null, "finance_info": null,
+        "linkedin_info": null, "date_updated": "2026-09-30T10:00:00Z"
+      },
+      "person": {
+        "id": 9104, "full_name": "Bob Stone", "first_name": "Bob", "last_name": "Stone", "skills": [],
+        "location": null,
+        "linkedin_info": {
+          "public_identifier": "bob-stone", "industry": null,
+          "public_profile_url": "https://www.linkedin.com/in/bob-stone"
+        },
+        "date_updated": "2026-09-01T00:00:00Z"
+      },
+      "date_updated": "2026-09-01T00:00:00Z"
+    }
+  ],
+  "total_search_results": 4
+}

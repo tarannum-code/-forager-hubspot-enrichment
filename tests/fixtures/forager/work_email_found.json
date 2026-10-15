@@ -1,0 +1,11 @@
+{
+  "job_id": "11111111-2222-3333-4444-555555555555",
+  "status": "completed",
+  "emails": [{"email": "Jane@AcmeAI.com", "validation_status": "valid"}],
+  "error_code": null,
+  "person_id": 9101,
+  "submitted_lookup": {"first_name": "", "last_name": "", "domain": "", "linkedin_public_identifier": "jane-doe-smith"},
+  "date_created": "2026-10-15T10:00:00Z",
+  "date_completed": "2026-10-15T10:00:09Z",
+  "result": "found"
+}

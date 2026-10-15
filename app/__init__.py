@@ -1,0 +1,3 @@
+"""Forager x HubSpot enrichment service."""
+
+__version__ = "1.0.0"

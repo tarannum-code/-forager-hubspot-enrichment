@@ -1,0 +1,53 @@
+{
+  "search_results": [
+    {
+      "id": 501,
+      "name": "Acme AI",
+      "legal_name": "Acme AI, Inc.",
+      "website": "https://www.acmeai.com/",
+      "domain": "acmeai.com",
+      "domain_rank": 1520,
+      "logo": "https://cdn.example.com/logos/acmeai.png",
+      "description": "Acme AI builds   safe, general-purpose AI systems for businesses.",
+      "founded_date": "2015-12-11",
+      "operating_status": "active",
+      "employees_range": "1001-5000",
+      "employees_amount": 3200,
+      "keywords": [
+        {"id": 1, "name": "artificial intelligence"},
+        {"id": 2, "name": "machine learning"}
+      ],
+      "location": {
+        "id": 9001,
+        "name": "San Francisco, California, United States",
+        "osm_locations": [
+          {"id": 1, "name": "San Francisco", "place_type": "city"},
+          {"id": 2, "name": "California", "place_type": "state"},
+          {"id": 3, "name": "United States", "place_type": "country"}
+        ]
+      },
+      "finance_info": {"revenue": 3700000000},
+      "linkedin_info": {
+        "public_identifier": "acme-ai",
+        "industry": {"id": 4, "name": "Software Development"},
+        "public_profile_url": "https://www.linkedin.com/company/acme-ai/"
+      },
+      "addresses": [
+        {
+          "street_number": "100",
+          "street_name": "Example Street",
+          "city": "San Francisco",
+          "state": "CA",
+          "postcode": "94110",
+          "country": "United States",
+          "summary": "100 Example Street, San Francisco, CA 94110, United States"
+        }
+      ],
+      "date_updated": "2026-09-30T10:00:00Z",
+      "found_simple_events": [],
+      "found_funding_events": [],
+      "found_job_post_events": []
+    }
+  ],
+  "total_search_results": 1
+}

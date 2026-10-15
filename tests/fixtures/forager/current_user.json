@@ -1,0 +1,10 @@
+{
+  "id": 1,
+  "username": "dev",
+  "email": "dev@example.com",
+  "first_name": "Dev",
+  "last_name": "User",
+  "accounts": [
+    {"id": 42, "name": "Dev account", "subscription": {"id": 3, "is_active": true, "credits_balance": "150.00"}}
+  ]
+}

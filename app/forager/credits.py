@@ -89,3 +89,22 @@ class CreditBudget:
     def release(self, reserved: int) -> None:
         """The call failed before being charged."""
         self.reserved -= reserved
+
+
+def credits_spent_since(ledger_path: Path, since: datetime, *, run_prefix: str = "") -> int:
+    """Credits recorded in the ledger at or after `since` (optionally for runs whose label
+    starts with `run_prefix`). Unreadable lines are ignored, a missing ledger counts as 0."""
+    total = 0
+    try:
+        with ledger_path.open(encoding="utf-8") as fh:
+            for line in fh:
+                try:
+                    record = json.loads(line)
+                    ts = datetime.fromisoformat(str(record["ts"]))
+                    if ts >= since and str(record.get("run", "")).startswith(run_prefix):
+                        total += int(record.get("credits") or 0)
+                except (ValueError, KeyError, TypeError):
+                    continue
+    except FileNotFoundError:
+        return 0
+    return total

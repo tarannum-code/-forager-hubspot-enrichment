@@ -336,3 +336,53 @@ async def test_dry_run_reports_instead_of_spending(
         await service.select_complete_contacts(
             org, accepted, wanted=5, options=FULL, require_email=True, require_phone=True
         )
+
+
+# ----------------------------------------------------------------------- robustness
+
+
+async def test_failure_marker_does_not_mask_the_original_error(
+    service: EnrichmentService, fake_hubspot: FakeHubSpot, mock_router: respx.MockRouter
+) -> None:
+    mock_router.post(forager_url("organization_search/")).respond(400, json={"detail": "bad"})
+    company_id = fake_hubspot.add("companies", {"domain": "acmeai.com"})
+    real_update = fake_hubspot.update_object
+
+    async def flaky_update(object_type: str, object_id: str | int, props: dict) -> dict:  # type: ignore[type-arg]
+        if props.get("forager_enrichment_status") == "failed":
+            raise RuntimeError("HubSpot is down too")
+        return await real_update(object_type, object_id, props)
+
+    fake_hubspot.update_object = flaky_update  # type: ignore[method-assign]
+    with pytest.raises(ApiError, match="400"):  # the Forager error, not the HubSpot one
+        await service.enrich_company(company_id)
+
+
+def test_resume_ignores_own_claim_but_not_finished_records(service: EnrichmentService) -> None:
+    fresh = {
+        "forager_enrichment_status": "in_progress",
+        "forager_enrichment_started_at": datetime.now(UTC).isoformat(),
+    }
+    assert service.skip_reason(fresh) == "enrichment already in progress"
+    assert service.skip_reason(fresh, resume=True) is None
+    done = {"forager_enrichment_status": "enriched"}
+    assert service.skip_reason(done, resume=True) == "already enriched"
+
+
+async def test_upsert_reuses_contact_with_same_email(
+    service: EnrichmentService, fake_hubspot: FakeHubSpot, mock_router: respx.MockRouter
+) -> None:
+    mock_forager(mock_router)
+    org = await service.resolve_organization(domain="acmeai.com")
+    assert org is not None
+    accepted, _ = await service.find_candidates(org, TITLES)
+    data = service.contact_data_from_candidate(accepted[0], org)
+    data.work_email = "jane@acmeai.com"
+    # Added by hand: same email, no LinkedIn URL. Creating another would be a 409.
+    existing_id = fake_hubspot.add("contacts", {"email": "jane@acmeai.com", "firstname": "J"})
+
+    result = await service.upsert_contact(data, company_id=None, source="cli")
+
+    assert result.object_id == existing_id
+    assert fake_hubspot.creates == []
+    assert fake_hubspot.props("contacts", existing_id)["firstname"] == "J"  # identity kept

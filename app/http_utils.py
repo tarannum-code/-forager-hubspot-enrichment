@@ -60,6 +60,16 @@ class RetryableApiError(ApiError):
         self.retry_after = retry_after
 
 
+def is_transient(exc: BaseException) -> bool:
+    """Worth retrying later: the upstream refused or was unreachable, so nothing was done
+    (and no credits charged). Read timeouts are excluded: a paid call may have gone through."""
+    if isinstance(exc, RetryableApiError):
+        return True
+    if isinstance(exc, ApiError):
+        return exc.status_code >= 500
+    return isinstance(exc, _SAFE_TRANSPORT_ERRORS)
+
+
 def parse_retry_after(value: str | None) -> float | None:
     """`Retry-After` may be delta-seconds or an HTTP date."""
     if not value:

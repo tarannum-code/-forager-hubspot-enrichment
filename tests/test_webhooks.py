@@ -1,20 +1,25 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import hmac
 import json
 import time
 from collections.abc import Iterator
+from datetime import UTC, datetime
+from pathlib import Path
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
 from app.config import Settings
+from app.http_utils import ApiError, RetryableApiError, is_transient
 from app.main import EventProcessor, create_app
-from app.webhooks.events import parse_events
+from app.webhooks.events import CreationEvent, parse_events
 from app.webhooks.signature import SignatureError, compute_signature, decode_uri, verify_v3
-from app.webhooks.worker import JobOutcome
+from app.webhooks.worker import JobOutcome, WebhookWorker
 
 SECRET = "test-client-secret"
 PUBLIC = "https://enrich.example.com"
@@ -166,3 +171,72 @@ def test_valid_webhook_is_queued_processed_and_deduplicated(
 def test_irrelevant_events_are_acknowledged(client: TestClient, processed: list[str]) -> None:
     response = _post(client, [{"subscriptionType": "deal.creation", "objectId": 5}])
     assert response.status_code == 200 and response.json() == {"received": 0, "queued": 0}  # type: ignore[attr-defined]
+
+
+# ----------------------------------------------------------------------- worker retries
+
+
+async def _drain(worker: WebhookWorker, calls: list[CreationEvent], expected: int) -> None:
+    for _ in range(200):
+        if len(calls) >= expected and worker.queue_size == 0:
+            break
+        await asyncio.sleep(0.01)
+    await worker.stop(timeout=1)
+
+
+async def test_worker_retries_transient_failures_as_resume() -> None:
+    calls: list[CreationEvent] = []
+
+    async def processor(event: CreationEvent) -> JobOutcome:
+        calls.append(event)
+        if len(calls) == 1:
+            raise RetryableApiError("HubSpot", 503, "unavailable")
+        return JobOutcome("enriched")
+
+    worker = WebhookWorker(processor, settle_delay=0, retry_delays=(0,))
+    worker.start()
+    worker.submit(parse_events([{"subscriptionType": "contact.creation", "objectId": 7}])[0])
+    await _drain(worker, calls, 2)
+
+    assert [e.retry for e in calls] == [0, 1]
+    job = worker.recent()[0]
+    assert (job["state"], job["result"], job["attempts"]) == ("done", "enriched", 2)
+
+
+async def test_worker_does_not_retry_permanent_failures() -> None:
+    calls: list[CreationEvent] = []
+
+    async def processor(event: CreationEvent) -> JobOutcome:
+        calls.append(event)
+        raise ApiError("HubSpot", 400, "bad request")
+
+    worker = WebhookWorker(processor, settle_delay=0, retry_delays=(0, 0))
+    worker.start()
+    event = parse_events([{"subscriptionType": "company.creation", "objectId": 9}])[0]
+    worker.submit(event)
+    await _drain(worker, calls, 1)
+
+    assert len(calls) == 1 and worker.recent()[0]["state"] == "failed"
+    assert not is_transient(ApiError("Forager", 404, "x"))
+    assert is_transient(ApiError("Forager", 500, "x"))
+
+
+def test_daily_webhook_credit_cap_limits_event_budget(tmp_path: Path) -> None:
+    settings = Settings(
+        _env_file=None,  # type: ignore[call-arg]
+        forager_api_key="key",
+        forager_account_id=42,
+        forager_cache_dir=tmp_path / "forager",
+        webhook_max_credits_per_event=25,
+        webhook_max_credits_per_day=30,
+    )
+    now = datetime.now(UTC).isoformat()
+    (tmp_path / "credit_ledger.jsonl").write_text(
+        json.dumps({"ts": now, "run": "webhook company:1", "credits": 21})
+        + "\n"
+        + json.dumps({"ts": now, "run": "cli demo-openai", "credits": 40})
+        + "\n"
+    )
+    processor = EventProcessor(settings, None, httpx.AsyncClient())  # type: ignore[arg-type]
+    assert processor.credits_spent_today() == 21
+    assert processor._forager("webhook contact:2").budget.limit == 9  # 30 - 21, not 25

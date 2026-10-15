@@ -25,6 +25,8 @@ class CreationEvent:
     event_id: str | None
     portal_id: str | None
     attempt: int
+    # How many times our own worker has re-run this job after a transient failure.
+    retry: int = 0
 
     @property
     def dedupe_key(self) -> str:

@@ -145,13 +145,17 @@ class EnrichmentService:
 
     # ================================================================== markers
 
-    def skip_reason(self, props: Properties, *, force: bool = False) -> str | None:
+    def skip_reason(
+        self, props: Properties, *, force: bool = False, resume: bool = False
+    ) -> str | None:
+        """Why a record must not be enriched now, or None. `resume` is a retry of our own
+        interrupted job, so its in_progress claim doesn't block it (finished records still do)."""
         if force:
             return None
         status = props.get("forager_enrichment_status")
         if status in _DONE_STATUSES:
             return f"already {status}"
-        if status == STATUS_IN_PROGRESS:
+        if status == STATUS_IN_PROGRESS and not resume:
             started = _parse_hubspot_datetime(props.get("forager_enrichment_started_at"))
             stale_after = timedelta(minutes=self.settings.enrichment_stale_after_minutes)
             if started is None or datetime.now(UTC) - started < stale_after:
@@ -185,6 +189,17 @@ class EnrichmentService:
         if status in (STATUS_ENRICHED, STATUS_PARTIAL):
             final["forager_enriched_at"] = utc_now_iso()
         await self.hubspot.update_object(object_type, object_id, final)
+
+    async def _mark_failed(self, object_type: str, object_id: str, exc: BaseException) -> None:
+        """Record a failure on the HubSpot record without masking the original error
+        (if HubSpot itself is down, this write fails too)."""
+        try:
+            await self._finish(object_type, object_id, {}, STATUS_FAILED, _error_note(exc))
+        except Exception:
+            logger.exception(
+                "Could not mark record as failed",
+                extra={"object_type": object_type, "object_id": object_id},
+            )
 
     # ================================================================== companies
 
@@ -225,14 +240,14 @@ class EnrichmentService:
         return None
 
     async def enrich_company(
-        self, company_id: str, *, force: bool = False, claimed: bool = False
+        self, company_id: str, *, force: bool = False, claimed: bool = False, resume: bool = False
     ) -> EnrichmentResult:
         record = await self.hubspot.get_object("companies", company_id, COMPANY_READ)
         if record is None:
             raise LookupError(f"HubSpot company {company_id} not found")
         props: Properties = record.get("properties") or {}
         if not claimed:
-            reason = self.skip_reason(props, force=force)
+            reason = self.skip_reason(props, force=force, resume=resume)
             if reason:
                 logger.info("Skipping company", extra={"company_id": company_id, "reason": reason})
                 return EnrichmentResult("company", company_id, STATUS_SKIPPED, reason)
@@ -257,7 +272,7 @@ class EnrichmentService:
             )
             return EnrichmentResult("company", company_id, STATUS_ENRICHED, "", mapped, org)
         except Exception as exc:
-            await self._finish("companies", company_id, {}, STATUS_FAILED, _error_note(exc))
+            await self._mark_failed("companies", company_id, exc)
             raise
 
     # ================================================================== people
@@ -399,6 +414,7 @@ class EnrichmentService:
         *,
         force: bool = False,
         claimed: bool = False,
+        resume: bool = False,
         prefetched: ContactData | None = None,
     ) -> EnrichmentResult:
         record = await self.hubspot.get_object("contacts", contact_id, CONTACT_READ)
@@ -406,7 +422,7 @@ class EnrichmentService:
             raise LookupError(f"HubSpot contact {contact_id} not found")
         props: Properties = record.get("properties") or {}
         if not claimed:
-            reason = self.skip_reason(props, force=force)
+            reason = self.skip_reason(props, force=force, resume=resume)
             if reason:
                 logger.info("Skipping contact", extra={"contact_id": contact_id, "reason": reason})
                 return EnrichmentResult("contact", contact_id, STATUS_SKIPPED, reason)
@@ -430,7 +446,7 @@ class EnrichmentService:
             )
             return EnrichmentResult("contact", contact_id, status, note, mapped)
         except Exception as exc:
-            await self._finish("contacts", contact_id, {}, STATUS_FAILED, _error_note(exc))
+            await self._mark_failed("contacts", contact_id, exc)
             raise
 
     async def associate_with_employer(
@@ -457,6 +473,15 @@ class EnrichmentService:
             return None
         return await self.hubspot.find_one("contacts", "hs_linkedin_url", url, CONTACT_READ)
 
+    async def find_existing_contact(self, data: ContactData) -> dict[str, Any] | None:
+        """Match by LinkedIn URL, then by email (HubSpot rejects a second contact with the
+        same email with 409, and a person may have been added by hand without LinkedIn)."""
+        found = await self.find_contact_by_linkedin(data.linkedin_slug)
+        email = normalize_email(data.email)
+        if found is None and email:
+            found = await self.hubspot.find_one("contacts", "email", email, CONTACT_READ)
+        return found
+
     async def upsert_contact(
         self,
         data: ContactData,
@@ -467,7 +492,7 @@ class EnrichmentService:
     ) -> EnrichmentResult:
         """Create (or update) a HubSpot contact from fully gathered data, already marked
         with an enrichment status so its contact.creation webhook is a no-op."""
-        existing = await self.find_contact_by_linkedin(data.linkedin_slug)
+        existing = await self.find_existing_contact(data)
         existing_props: Properties = (existing or {}).get("properties") or {}
         mapped = contact_properties(data, existing=existing_props)
         missing = missing_required({**existing_props, **mapped})
@@ -493,9 +518,9 @@ class EnrichmentService:
     # ================================================================== webhook flows
 
     async def process_contact_created(
-        self, contact_id: str, options: ContactLookupOptions
+        self, contact_id: str, options: ContactLookupOptions, *, resume: bool = False
     ) -> EnrichmentResult:
-        return await self.enrich_contact(contact_id, options)
+        return await self.enrich_contact(contact_id, options, resume=resume)
 
     async def process_company_created(
         self,
@@ -504,8 +529,11 @@ class EnrichmentService:
         title_filter: TitleFilter,
         options: ContactLookupOptions,
         max_new_contacts: int,
+        resume: bool = False,
     ) -> CompanyFlowResult:
-        company = await self.enrich_company(company_id)
+        # On a retry the company may already be enriched while contact discovery failed;
+        # re-running it is free (the Forager organization is in the disk cache).
+        company = await self.enrich_company(company_id, force=resume)
         flow = CompanyFlowResult(company=company)
         if company.status == STATUS_SKIPPED:
             return flow  # already handled (e.g. created by this service): no loop
@@ -513,7 +541,7 @@ class EnrichmentService:
         contact_ids = await self._contacts_of_company(company_id, company.properties)
         if contact_ids:
             for contact_id in contact_ids:
-                flow.contacts.append(await self._safe_enrich(contact_id, options))
+                flow.contacts.append(await self._safe_enrich(contact_id, options, resume=resume))
             return flow
 
         org = company.organization

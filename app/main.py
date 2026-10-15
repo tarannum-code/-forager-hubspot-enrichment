@@ -9,6 +9,8 @@ import json
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -21,7 +23,7 @@ from app.enrichment.service import ContactLookupOptions, EnrichmentService
 from app.enrichment.title_filter import TitleFilter
 from app.forager.cache import ResponseCache
 from app.forager.client import ForagerClient
-from app.forager.credits import CreditBudget, CreditBudgetExceeded
+from app.forager.credits import CreditBudget, CreditBudgetExceeded, credits_spent_since
 from app.hubspot.client import HubSpotClient
 from app.logging_config import configure_logging
 from app.webhooks.events import CreationEvent, parse_events
@@ -29,6 +31,8 @@ from app.webhooks.signature import SIGNATURE_HEADER, TIMESTAMP_HEADER, Signature
 from app.webhooks.worker import JobOutcome, WebhookWorker
 
 logger = logging.getLogger(__name__)
+
+WEBHOOK_RUN_PREFIX = "webhook "
 
 
 class EventProcessor:
@@ -51,12 +55,22 @@ class EventProcessor:
             settings.contact_titles, settings.contact_title_excludes
         )
 
+    @property
+    def ledger_path(self) -> Path:
+        return self.settings.forager_cache_dir.parent / "credit_ledger.jsonl"
+
+    def credits_spent_today(self) -> int:
+        midnight = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+        return credits_spent_since(self.ledger_path, midnight, run_prefix=WEBHOOK_RUN_PREFIX)
+
     def _forager(self, label: str) -> ForagerClient:
         api_key, account_id = self.settings.require_forager()
+        # Per-event cap, further limited by what is left of the daily webhook allowance.
+        daily_left = max(0, self.settings.webhook_max_credits_per_day - self.credits_spent_today())
         budget = CreditBudget(
-            limit=self.settings.webhook_max_credits_per_event,
+            limit=min(self.settings.webhook_max_credits_per_event, daily_left),
             label=label,
-            ledger_path=self.settings.forager_cache_dir.parent / "credit_ledger.jsonl",
+            ledger_path=self.ledger_path,
         )
         return ForagerClient(
             api_key=api_key,
@@ -68,8 +82,9 @@ class EventProcessor:
         )
 
     async def __call__(self, event: CreationEvent) -> JobOutcome:
-        forager = self._forager(f"webhook {event.dedupe_key}")
+        forager = self._forager(f"{WEBHOOK_RUN_PREFIX}{event.dedupe_key}")
         service = EnrichmentService(forager, self.hubspot, self.settings)
+        resume = event.retry > 0  # our own retry: its earlier in_progress claim is ours
         try:
             if event.kind == "company":
                 flow = await service.process_company_created(
@@ -77,13 +92,16 @@ class EventProcessor:
                     title_filter=self.title_filter,
                     options=self.options,
                     max_new_contacts=self.settings.webhook_max_new_contacts,
+                    resume=resume,
                 )
                 contacts = ", ".join(f"{c.object_id}:{c.status}" for c in flow.contacts)
                 message = flow.company.message or (f"contacts [{contacts}]" if contacts else "")
                 if flow.created_contact_ids:
                     message += f" | created {len(flow.created_contact_ids)} new contact(s)"
                 return JobOutcome(flow.company.status, forager.budget.spent, message.strip())
-            result = await service.process_contact_created(event.object_id, self.options)
+            result = await service.process_contact_created(
+                event.object_id, self.options, resume=resume
+            )
             return JobOutcome(result.status, forager.budget.spent, result.message)
         except CreditBudgetExceeded as exc:
             # Records were marked failed with the reason; a later manual run can resume.
@@ -112,6 +130,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         hubspot = HubSpotClient.from_settings(settings) if settings.hubspot_access_token else None
         worker = None
+        processor = None
         if hubspot is not None:
             processor = EventProcessor(settings, hubspot, forager_http)
             worker = WebhookWorker(
@@ -119,9 +138,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 concurrency=settings.webhook_worker_concurrency,
                 settle_delay=settings.webhook_settle_delay_seconds,
                 dedupe_ttl=settings.webhook_dedupe_ttl_seconds,
+                retry_delays=settings.webhook_retry_delays_seconds,
             )
             worker.start()
+        else:
+            logger.warning("HUBSPOT_ACCESS_TOKEN is not set: webhook processing is disabled")
+        if not settings.hubspot_client_secret:
+            logger.warning("HUBSPOT_CLIENT_SECRET is not set: all webhooks will be rejected")
         app.state.worker = worker
+        app.state.processor = processor
         logger.info("Service started", extra={"version": __version__, "env": settings.environment})
         try:
             yield
@@ -144,6 +169,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def health(request: Request) -> dict[str, Any]:
         """Liveness/readiness: no external calls, so it is cheap and never flaky."""
         worker: WebhookWorker | None = request.app.state.worker
+        processor: EventProcessor | None = request.app.state.processor
         return {
             "status": "ok",
             "version": __version__,
@@ -160,6 +186,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 ),
                 "hubspot_configured": bool(settings.hubspot_access_token),
                 "max_credits_per_event": settings.webhook_max_credits_per_event,
+                "max_credits_per_day": settings.webhook_max_credits_per_day,
+                "credits_spent_today": processor.credits_spent_today() if processor else 0,
                 "max_new_contacts": settings.webhook_max_new_contacts,
                 "lookup_phone": settings.webhook_lookup_phone,
                 "titles": settings.contact_titles,

@@ -30,7 +30,7 @@ from app.enrichment.mapping import (
     contact_properties,
     missing_required,
 )
-from app.enrichment.matching import best_organization
+from app.enrichment.matching import best_organization, score_organization
 from app.enrichment.title_filter import TitleFilter
 from app.forager.client import ForagerClient
 from app.forager.credits import CreditBudgetExceeded
@@ -225,12 +225,19 @@ class EnrichmentService:
             best = best_organization(
                 result.search_results, domain=domain, linkedin_url=linkedin_url, name=name
             )
-            if name and (best is None or not _same_name(best.name, name)):
-                # The domain may belong to an acquired company too (e.g. "Octane (We've
-                # joined Stripe!)" for stripe.com): look the company up by name instead.
-                matched = await self._organization_by_name_and_domain(name, domain)
-                if matched is not None:
-                    return matched
+            if name:
+                # Acquired companies keep (and may even be renamed to) the parent's domain
+                # and name: for stripe.com the domain search returned only Octane, renamed
+                # "Stripe" with 2 employees. Forager's free autocomplete knows the canonical
+                # id for name + domain; if it differs, fetch it (1 credit) and keep the
+                # better-scoring of the two.
+                alt = await self._organization_by_name_and_domain(name, domain, skip=best)
+                if alt is not None and (
+                    best is None
+                    or score_organization(alt, domain=domain, name=name)
+                    > score_organization(best, domain=domain, name=name)
+                ):
+                    return alt
             return best
         if slug:
             result = await self.forager.search_organizations(linkedin_public_identifiers=[slug])
@@ -247,9 +254,11 @@ class EnrichmentService:
             return best_organization(result.search_results, domain=item.domain)
         return None
 
-    async def _organization_by_name_and_domain(self, name: str, domain: str) -> Organization | None:
+    async def _organization_by_name_and_domain(
+        self, name: str, domain: str, *, skip: Organization | None = None
+    ) -> Organization | None:
         """Free autocomplete, then 1 paid search by id, when an entry matches both the
-        name and the domain. Avoids picking an acquired company that shares the domain."""
+        name and the domain. Returns None (and spends nothing) if that entry is `skip`."""
         try:
             items = await self.forager.autocomplete_organizations(name)
         except ApiError:
@@ -258,6 +267,8 @@ class EnrichmentService:
         for item in items:
             same_domain = normalize_domain(item.domain) == domain
             if same_domain and _same_name(item.name, name) and item.id.isdigit():
+                if skip is not None and str(skip.id) == item.id:
+                    return None
                 result = await self.forager.search_organizations(organization_ids=[int(item.id)])
                 return next((o for o in result.search_results if str(o.id) == item.id), None)
         return None

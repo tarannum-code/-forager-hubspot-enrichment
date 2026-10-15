@@ -396,9 +396,12 @@ async def test_acquired_company_sharing_the_domain_is_not_picked(
     service: EnrichmentService, fake_hubspot: FakeHubSpot, mock_router: respx.MockRouter
 ) -> None:
     routes = mock_forager(mock_router)
+    # Real case: Octane was acquired by Stripe and renamed "Stripe" in Forager, keeps
+    # stripe.com, has 2 employees, and was the only result of the domain search.
     acquired = {
         "id": 900,
-        "name": "Octane (We've joined Acme AI!)",
+        "name": "Acme AI",
+        "legal_name": "Octane (We've joined Acme AI!)",
         "domain": "acmeai.com",
         "website": "https://acmeai.com",
         "employees_amount": 2,
@@ -411,19 +414,19 @@ async def test_acquired_company_sharing_the_domain_is_not_picked(
 
     result = await service.enrich_company(company_id)
 
-    # Domain search found only the acquired company; the free autocomplete found the
-    # real one by name + domain, then it was fetched by id.
+    # The free autocomplete knew the canonical id (501); it was fetched and won on size.
     assert result.organization is not None and result.organization.id == 501
     assert routes["autocomplete"].call_count == 1
     assert b'"organization_ids":[501]' in routes["org"].calls.last.request.content
     assert service.forager.budget.spent == 2
 
 
-async def test_matching_name_needs_no_autocomplete(
+async def test_no_extra_credit_when_autocomplete_agrees(
     service: EnrichmentService, fake_hubspot: FakeHubSpot, mock_router: respx.MockRouter
 ) -> None:
     routes = mock_forager(mock_router)
     company_id = fake_hubspot.add("companies", {"name": "Acme AI", "domain": "acmeai.com"})
     await service.enrich_company(company_id)
-    assert routes["autocomplete"].call_count == 0
+    assert routes["autocomplete"].call_count == 1  # free
+    assert routes["org"].call_count == 1
     assert service.forager.budget.spent == 1

@@ -55,6 +55,8 @@ def smart_name_case(name: Any) -> str | None:
     if not text:
         return None
     parts = _NAME_SEPARATORS.split(text)
+    # In an otherwise mixed-case name, short all-caps tokens are initials ("Alexandre LS").
+    name_is_mixed = any(c.isupper() for c in text) and any(c.islower() for c in text)
     out: list[str] = []
     word_index = 0
     for part in parts:
@@ -62,7 +64,14 @@ def smart_name_case(name: Any) -> str | None:
             out.append(part)
             continue
         is_intentional_mixed = any(c.isupper() for c in part[1:]) and any(c.islower() for c in part)
-        out.append(part if is_intentional_mixed else _case_token(part, first=word_index == 0))
+        is_initials = (
+            name_is_mixed
+            and part.isupper()
+            and len(part) <= 3
+            and part.lower() not in _LOWER_PARTICLES
+        )
+        keep = is_intentional_mixed or is_initials
+        out.append(part if keep else _case_token(part, first=word_index == 0))
         word_index += 1
     return "".join(out)
 
@@ -170,6 +179,7 @@ def linkedin_company_url(slug: str | None) -> str | None:
 
 _COUNTRY_ALIASES = {
     "us": "United States", "usa": "United States", "u.s.": "United States",
+    "ca": "Canada", "gb": "United Kingdom", "in": "India", "de": "Germany", "fr": "France",
     "united states of america": "United States", "uk": "United Kingdom",
     "great britain": "United Kingdom", "uae": "United Arab Emirates",
 }
@@ -206,8 +216,25 @@ _METRO_AREAS = {
     "greater london": ("London", None, "United Kingdom"),
     "london area, united kingdom": ("London", None, "United Kingdom"),
 }
-_CITY_TYPES = {"city", "town", "village", "municipality", "hamlet", "locality", "borough"}
-_STATE_TYPES = {"state", "region", "province", "county_state", "administrative_area"}
+_METRO_AREAS["san francisco bay"] = ("San Francisco", "California", "United States")
+_METRO_AREAS["bay area"] = ("San Francisco", "California", "United States")
+# "hamlet"/"county"/"bay" are deliberately not cities: Forager geocoded "United States,
+# India" to the hamlet *India, Tennessee*. Only real settlement types count as a city.
+_CITY_TYPES = {"city", "town", "village", "municipality", "locality", "borough", "suburb"}
+_STATE_TYPES = {"state", "region", "province", "administrative_area"}
+_OTHER_COUNTRIES = {
+    "bangladesh", "china", "turkey", "egypt", "nigeria", "kenya", "south africa", "argentina",
+    "chile", "colombia", "portugal", "belgium", "austria", "denmark", "norway", "finland",
+    "ukraine", "russia", "indonesia", "philippines", "vietnam", "thailand", "malaysia",
+    "new zealand", "saudi arabia", "qatar", "taiwan", "hong kong", "romania", "greece",
+    "czech republic", "hungary", "sri lanka", "nepal", "ghana", "morocco",
+    "c\u00f4te d'ivoire", "c\u00f4te d\u2019ivoire", "cote d'ivoire",
+}
+
+
+def _is_country(text: str) -> bool:
+    lower = text.lower().strip()
+    return lower in _COUNTRY_TO_REGION or lower in _COUNTRY_ALIASES or lower in _OTHER_COUNTRIES
 
 
 @dataclass(frozen=True)
@@ -215,6 +242,9 @@ class Location:
     city: str | None = None
     state: str | None = None
     country: str | None = None
+    # False when the source data contradicts itself; all parts are then left empty
+    # (an empty field is better than a person filed under the wrong country).
+    reliable: bool = True
 
     @property
     def is_empty(self) -> bool:
@@ -235,10 +265,19 @@ def _normalize_state(value: str | None, country: str | None) -> str | None:
     return text
 
 
-def parse_location(location: Any) -> Location:
-    """Turn a Forager `InnerLocation` ({name, osm_locations[{name, place_type}]}) into parts.
+def _title_if_lower(value: str | None) -> str | None:
+    """Display names often arrive lowercased ("san francisco, united states")."""
+    if value and value.islower():
+        return " ".join(word.capitalize() for word in value.split(" "))
+    return value
 
-    Prefers the structured OSM hierarchy; falls back to the comma-separated display name.
+
+def parse_location(location: Any) -> Location:
+    """Turn a Forager `InnerLocation` into city / state / country.
+
+    Real Forager shape: `name` is the person's own (often lowercased) location text and
+    `osm_locations` is a geocoded hierarchy whose names are themselves hierarchical
+    ("San Francisco, California, United States", place_type "city").
     """
     if location is None:
         return Location()
@@ -247,42 +286,68 @@ def parse_location(location: Any) -> Location:
     if isinstance(location, str):
         location = {"name": location}
 
-    city = state = country = None
+    display = clean_text(location.get("name")) or ""
+    parts = [p.strip() for p in display.split(",") if p.strip()]
+
+    osm_city = osm_state = osm_country = None
     for osm in location.get("osm_locations") or []:
         place_type = str(osm.get("place_type") or "").lower()
-        name = clean_text(osm.get("name"))
+        name = clean_text(str(osm.get("name") or "").split(",")[0])
         if not name:
             continue
         if place_type == "country":
-            country = country or name
+            osm_country = osm_country or name
         elif place_type in _STATE_TYPES:
-            state = state or name
+            osm_state = osm_state or name
         elif place_type in _CITY_TYPES:
-            city = city or name
+            osm_city = osm_city or name
 
-    display = clean_text(location.get("name"))
-    if display and not (city and country):
-        metro = _METRO_AREAS.get(display.lower())
+    # Contradictions -> unreliable: a country name before the last segment
+    # ("united states, india"), or a display country different from the geocoded one.
+    if any(_is_country(p) for p in parts[:-1]):
+        return Location(reliable=False)
+    display_country = normalize_country(_title_if_lower(parts[-1])) if parts else None
+    if (
+        display_country
+        and _is_country(display_country)
+        and osm_country
+        and display_country.lower() != osm_country.lower()
+    ):
+        return Location(reliable=False)
+
+    city, state, country = osm_city, osm_state, osm_country
+    first = parts[0] if parts else None
+
+    # Prefer the person's own wording when it is a shorter form of the geocoded city
+    # ("london" vs "City of London").
+    if city and first and first.lower() != city.lower() and first.lower() in city.lower():
+        city = first
+
+    if not city and display:
+        metro = _METRO_AREAS.get(display.lower()) or (
+            _METRO_AREAS.get(first.lower()) if first else None
+        )
         if metro:
-            city, state, country = (city or metro[0]), (state or metro[1]), (country or metro[2])
-        else:
-            parts = [p.strip() for p in display.split(",") if p.strip()]
-            if len(parts) >= 3:
-                city, state, country = city or parts[0], state or parts[-2], country or parts[-1]
-            elif len(parts) == 2:
-                first, last = parts
-                country = country or last
-                if first.lower() in _US_STATE_NAMES or first.upper() in US_STATES:
-                    state = state or first
-                else:
-                    metro = _METRO_AREAS.get(first.lower())
-                    city = city or (metro[0] if metro else first)
-            elif len(parts) == 1 and not country:
-                country = parts[0]
+            city, state, country = metro[0], state or metro[1], country or metro[2]
+        elif len(parts) >= 3:
+            city = parts[0]
+            state = state or parts[-2]
+        elif len(parts) == 2 and first and not (
+            first.lower() in _US_STATE_NAMES or first.upper() in US_STATES or _is_country(first)
+        ):
+            city = first
+        elif len(parts) == 2 and first and not _is_country(first):
+            state = state or first
+    if not country and parts and _is_country(parts[-1]):
+        country = parts[-1]
+    if not country and len(parts) == 1 and not city:
+        country = parts[0]
 
-    country = normalize_country(country)
+    country = normalize_country(_title_if_lower(country))
     return Location(
-        city=clean_text(city), state=_normalize_state(state, country), country=country
+        city=_title_if_lower(clean_text(city)),
+        state=_normalize_state(_title_if_lower(state), country),
+        country=country,
     )
 
 

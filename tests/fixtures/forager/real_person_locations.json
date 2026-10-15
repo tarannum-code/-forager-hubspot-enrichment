@@ -1,0 +1,242 @@
+[
+ {
+  "id": 1056862,
+  "name": "united states, côte d’ivoire",
+  "osm_locations": [
+   {
+    "id": 351,
+    "name": "Côte d'Ivoire",
+    "place_type": "country"
+   },
+   {
+    "id": 394867,
+    "name": "Africa",
+    "place_type": "continent"
+   }
+  ]
+ },
+ {
+  "id": 471,
+  "name": "new york, new york, united states",
+  "osm_locations": [
+   {
+    "id": 10,
+    "name": "United States",
+    "place_type": "country"
+   },
+   {
+    "id": 247,
+    "name": "New York, United States",
+    "place_type": "state"
+   },
+   {
+    "id": 1080,
+    "name": "New York, United States",
+    "place_type": "city"
+   },
+   {
+    "id": 394868,
+    "name": "North America",
+    "place_type": "continent"
+   }
+  ]
+ },
+ {
+  "id": 932682,
+  "name": "united states, bangladesh",
+  "osm_locations": [
+   {
+    "id": 540,
+    "name": "Bangladesh",
+    "place_type": "country"
+   },
+   {
+    "id": 394865,
+    "name": "Asia",
+    "place_type": "continent"
+   }
+  ]
+ },
+ {
+  "id": 4660,
+  "name": "san francisco, california, united states",
+  "osm_locations": [
+   {
+    "id": 10,
+    "name": "United States",
+    "place_type": "country"
+   },
+   {
+    "id": 275,
+    "name": "California, United States",
+    "place_type": "state"
+   },
+   {
+    "id": 7746,
+    "name": "San Francisco, California, United States",
+    "place_type": "city"
+   },
+   {
+    "id": 394868,
+    "name": "North America",
+    "place_type": "continent"
+   }
+  ]
+ },
+ {
+  "id": 28746,
+  "name": "turkey",
+  "osm_locations": [
+   {
+    "id": 64,
+    "name": "Turkey",
+    "place_type": "country"
+   },
+   {
+    "id": 394865,
+    "name": "Asia",
+    "place_type": "continent"
+   }
+  ]
+ },
+ {
+  "id": 4660,
+  "name": "san francisco, california, united states",
+  "osm_locations": [
+   {
+    "id": 10,
+    "name": "United States",
+    "place_type": "country"
+   },
+   {
+    "id": 275,
+    "name": "California, United States",
+    "place_type": "state"
+   },
+   {
+    "id": 7746,
+    "name": "San Francisco, California, United States",
+    "place_type": "city"
+   },
+   {
+    "id": 394868,
+    "name": "North America",
+    "place_type": "continent"
+   }
+  ]
+ },
+ {
+  "id": 4660,
+  "name": "san francisco, california, united states",
+  "osm_locations": [
+   {
+    "id": 10,
+    "name": "United States",
+    "place_type": "country"
+   },
+   {
+    "id": 275,
+    "name": "California, United States",
+    "place_type": "state"
+   },
+   {
+    "id": 7746,
+    "name": "San Francisco, California, United States",
+    "place_type": "city"
+   },
+   {
+    "id": 394868,
+    "name": "North America",
+    "place_type": "continent"
+   }
+  ]
+ },
+ {
+  "id": 211549,
+  "name": "london, united kingdom",
+  "osm_locations": [
+   {
+    "id": 39,
+    "name": "United Kingdom",
+    "place_type": "country"
+   },
+   {
+    "id": 91,
+    "name": "England, United Kingdom",
+    "place_type": "state"
+   },
+   {
+    "id": 457,
+    "name": "City of London, England, United Kingdom",
+    "place_type": "city"
+   },
+   {
+    "id": 394866,
+    "name": "Europe",
+    "place_type": "continent"
+   }
+  ]
+ },
+ {
+  "id": 2860,
+  "name": "united states, india",
+  "osm_locations": [
+   {
+    "id": 10,
+    "name": "United States",
+    "place_type": "country"
+   },
+   {
+    "id": 1304,
+    "name": "Tennessee, United States",
+    "place_type": "state"
+   },
+   {
+    "id": 5086,
+    "name": "India, Tennessee, United States",
+    "place_type": "hamlet"
+   },
+   {
+    "id": 5087,
+    "name": "Henry County, Tennessee, United States",
+    "place_type": "county"
+   },
+   {
+    "id": 394868,
+    "name": "North America",
+    "place_type": "continent"
+   }
+  ]
+ },
+ {
+  "id": 744256,
+  "name": "san francisco bay, united states",
+  "osm_locations": [
+   {
+    "id": 10,
+    "name": "United States",
+    "place_type": "country"
+   },
+   {
+    "id": 275,
+    "name": "California, United States",
+    "place_type": "state"
+   },
+   {
+    "id": 2787,
+    "name": "San Mateo County, California, United States",
+    "place_type": "county"
+   },
+   {
+    "id": 248267,
+    "name": "San Francisco Bay, California, United States",
+    "place_type": "bay"
+   },
+   {
+    "id": 394868,
+    "name": "North America",
+    "place_type": "continent"
+   }
+  ]
+ }
+]

@@ -17,16 +17,18 @@ from rich.console import Console
 from rich.table import Table
 
 from app.config import ConfigError, Settings, get_settings
+from app.enrichment.candidates import rank_candidates
+from app.enrichment.matching import best_organization
 from app.enrichment.title_filter import TitleFilter
 from app.forager.client import ForagerClient
 from app.forager.credits import CREDIT_COSTS, CreditBudget, CreditBudgetExceeded
+from app.forager.models import PersonRoleSearchResult
 from app.http_utils import ApiError
 from app.hubspot.client import HubSpotClient
 from app.hubspot.properties import ensure_properties
 from app.logging_config import configure_logging
 from app.normalize import (
     clean_job_title,
-    linkedin_slug,
     normalize_domain,
     parse_location,
     smart_name_case,
@@ -250,9 +252,11 @@ async def _lookup_company(
     async with _forager(settings, budget, no_cache) as forager:
         before = await forager.credits_balance()
         result = await forager.search_organizations(domains=[clean])
-        if not result.search_results:
+        best = best_organization(result.search_results, domain=clean)
+        if best is None:
             console.print(f"[yellow]Forager has no organization for {clean}[/yellow]")
-        for org in result.search_results[:3]:
+        others = [o for o in result.search_results if best and o.id != best.id]
+        for org in [o for o in [best] if o]:
             loc = parse_location(org.location)
             linkedin = org.linkedin_info
             rows = {
@@ -266,10 +270,16 @@ async def _lookup_company(
                 "HQ": ", ".join(filter(None, [loc.city, loc.state, loc.country])),
                 "Description": (org.description or "")[:300],
             }
-            table = Table(title=f"{org.name} (Forager id {org.id})", show_header=False)
+            table = Table(title=f"Best match: {org.name} (Forager id {org.id})", show_header=False)
             for key, value in rows.items():
                 table.add_row(key, str(value))
             console.print(table)
+        if others:
+            names = ", ".join(f"{o.name} ({o.employees_amount or 0} emp)" for o in others[:5])
+            console.print(
+                f"[dim]Also returned for this domain (ignored): {names}"
+                f"{' ...' if len(others) > 5 else ''}[/dim]"
+            )
         console.print(f"Total matches: {result.total_search_results}")
         await _print_spend(forager, before)
 
@@ -324,63 +334,62 @@ async def _find_contacts(
         f"Forager role_title query: [cyan]{title_filter.to_forager_query()}[/cyan]"
     )
     budget = _budget(settings, max_credits, f"find-contacts {clean}")
-    _confirm_spend([("person_role_search", pages)], budget, yes)
+    # The company is resolved first (cached after the first lookup -> free), so people are
+    # searched by Forager organization id rather than by a domain shared by many orgs.
+    _confirm_spend([("organization_search", 1), ("person_role_search", pages)], budget, yes)
 
     async with _forager(settings, budget, no_cache) as forager:
         before = await forager.credits_balance()
-        kept: list[Any] = []
-        rejected: list[tuple[Any, str]] = []
-        seen: set[int] = set()
+        orgs = await forager.search_organizations(domains=[clean])
+        company = best_organization(orgs.search_results, domain=clean)
+        if company is None:
+            console.print(f"[yellow]Forager has no organization for {clean}[/yellow]")
+            return
+        console.print(f"Company: [bold]{company.name}[/bold] (Forager id {company.id})")
+        rows: list[PersonRoleSearchResult] = []
         total = 0
         for page in range(1, pages + 1):
             query = forager.person_role_query(
                 role_title=title_filter.to_forager_query(),
-                organization_domains=[clean],
+                organization_ids=[company.id],
                 page=page,
             )
             result = await forager.search_person_roles(query)
             total = result.total_search_results
-            for row in result.search_results:
-                if row.person.id in seen:
-                    continue
-                seen.add(row.person.id)
-                org_domain = normalize_domain(row.organization.domain) if row.organization else None
-                if org_domain != clean:
-                    rejected.append((row, f"works at {org_domain}"))
-                elif not title_filter.matches(row.role_title):
-                    rejected.append((row, "title filter"))
-                else:
-                    kept.append(row)
+            rows.extend(result.search_results)
             if not result.search_results:
                 break
+        accepted, rejected = rank_candidates(rows, company, title_filter)
 
-        kept.sort(key=lambda r: title_filter.rank(r.role_title))
-        table = Table(title=f"People at {clean} matching the title filter ({len(kept)})")
-        for column in ("#", "Name", "Title", "Location", "LinkedIn"):
+        table = Table(title=f"People at {company.name} matching the title filter ({len(accepted)})")
+        for column in ("#", "Name", "Title", "Location", "LinkedIn", "Quality"):
             table.add_column(column)
-        for i, row in enumerate(kept, 1):
-            person = row.person
-            loc = parse_location(person.location)
+        for i, candidate in enumerate(accepted, 1):
+            person, loc = candidate.row.person, candidate.location
             first, last = smart_name_case(person.first_name), smart_name_case(person.last_name)
-            name = " ".join(filter(None, [first, last]))
-            url = person.linkedin_info.public_profile_url if person.linkedin_info else None
             table.add_row(
                 str(i),
-                name,
-                clean_job_title(row.role_title) or "",
-                ", ".join(filter(None, [loc.city, loc.state, loc.country])),
-                linkedin_slug(url) or "",
+                " ".join(filter(None, [first, last])),
+                clean_job_title(candidate.row.role_title) or "",
+                ", ".join(filter(None, [loc.city, loc.state, loc.country])) or "-",
+                candidate.linkedin_slug or "",
+                f"{candidate.score}"
+                + (f" ({'; '.join(candidate.notes)})" if candidate.notes else ""),
             )
         console.print(table)
         if show_rejected and rejected:
             rejected_table = Table(title=f"Filtered out ({len(rejected)})")
             for column in ("Name", "Title", "Reason"):
                 rejected_table.add_column(column)
-            for row, reason in rejected:
-                rejected_table.add_row(row.person.full_name or "", row.role_title or "", reason)
+            for candidate in rejected:
+                rejected_table.add_row(
+                    smart_name_case(candidate.row.person.full_name) or "",
+                    candidate.row.role_title or "",
+                    candidate.reject_reason or "",
+                )
             console.print(rejected_table)
         console.print(
-            f"Forager matches for this query: {total} | kept {len(kept)}, "
+            f"Forager matches for this query: {total} | accepted {len(accepted)}, "
             f"rejected {len(rejected)}"
         )
         await _print_spend(forager, before)

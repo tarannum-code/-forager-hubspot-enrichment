@@ -69,6 +69,9 @@ class Settings(BaseSettings):
     webhook_lookup_personal_email: bool = False
     webhook_lookup_phone: bool = False
     webhook_worker_concurrency: int = Field(default=1, ge=1, le=8)
+    # Wait before processing so associations made right after creation are visible.
+    webhook_settle_delay_seconds: float = Field(default=5.0, ge=0, le=60)
+    webhook_dedupe_ttl_seconds: int = Field(default=3600, ge=0)
     # Contacts stuck "in_progress" longer than this are considered abandoned and retried.
     enrichment_stale_after_minutes: int = Field(default=30, ge=1)
 

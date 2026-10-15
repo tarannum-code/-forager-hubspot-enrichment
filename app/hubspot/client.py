@@ -203,9 +203,7 @@ class HubSpotClient:
 
     # ------------------------------------------------------------------ associations
 
-    async def associated_ids(
-        self, from_type: str, object_id: str | int, to_type: str
-    ) -> list[str]:
+    async def associated_ids(self, from_type: str, object_id: str | int, to_type: str) -> list[str]:
         ids: list[str] = []
         after: str | None = None
         while True:

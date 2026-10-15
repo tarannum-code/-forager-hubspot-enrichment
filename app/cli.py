@@ -720,6 +720,64 @@ def _show_selection(outcomes: list[SelectionOutcome]) -> None:
     console.print(table)
 
 
+# ---------------------------------------------------------------------------- simulate-webhook
+
+
+@app.command("simulate-webhook")
+def simulate_webhook(
+    kind: str = typer.Argument(..., help="company or contact"),
+    object_id: str = typer.Argument(..., help="HubSpot record id"),
+    url: str = typer.Option(
+        "http://localhost:8000/webhooks/hubspot", "--url", help="Webhook endpoint to call."
+    ),
+) -> None:
+    """Send a correctly signed (v3) HubSpot creation event to the service - for local
+    testing and demos. Uses HUBSPOT_CLIENT_SECRET, exactly like HubSpot would."""
+    import json
+    import time
+
+    import httpx
+
+    from app.webhooks.signature import SIGNATURE_HEADER, TIMESTAMP_HEADER, compute_signature
+
+    if kind not in ("company", "contact"):
+        raise typer.BadParameter("kind must be 'company' or 'contact'")
+    settings = get_settings()
+    if not settings.hubspot_client_secret:
+        console.print("[red]HUBSPOT_CLIENT_SECRET must be set to sign the request.[/red]")
+        raise typer.Exit(2)
+    event = {
+        "eventId": int(time.time()),
+        "subscriptionId": 0,
+        "portalId": 0,
+        "occurredAt": int(time.time() * 1000),
+        "subscriptionType": f"{kind}.creation",
+        "attemptNumber": 0,
+        "objectId": int(object_id),
+        "changeSource": "SIMULATED",
+    }
+    body = json.dumps([event]).encode()
+    timestamp = str(int(time.time() * 1000))
+    # Sign the public URL when the server is configured with one (it verifies against it).
+    signed_url = url
+    if settings.public_base_url and "localhost" not in url:
+        signed_url = settings.public_base_url + httpx.URL(url).raw_path.decode()
+    signature = compute_signature(
+        settings.hubspot_client_secret.get_secret_value(), "POST", signed_url, body, timestamp
+    )
+    response = httpx.post(
+        url,
+        content=body,
+        headers={
+            SIGNATURE_HEADER: signature,
+            TIMESTAMP_HEADER: timestamp,
+            "Content-Type": "application/json",
+        },
+        timeout=10,
+    )
+    console.print(f"{response.status_code} {response.text}")
+
+
 def main() -> None:
     app()
 

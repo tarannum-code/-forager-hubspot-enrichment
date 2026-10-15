@@ -1,0 +1,14 @@
+.env
+.env.*
+.cache/
+.venv/
+venv/
+.git/
+tests/
+hubspot-project/
+**/__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.md
+!README.md

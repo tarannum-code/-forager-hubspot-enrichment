@@ -13,6 +13,7 @@ from app.enrichment.service import ContactLookupOptions, EnrichmentService
 from app.enrichment.title_filter import TitleFilter
 from app.forager.client import ForagerClient
 from app.forager.credits import CreditBudget, CreditBudgetExceeded
+from app.http_utils import ApiError
 from tests.conftest import forager_url, load_fixture
 from tests.fakes import FakeHubSpot
 
@@ -132,7 +133,7 @@ async def test_company_failure_is_recorded(
 ) -> None:
     mock_router.post(forager_url("organization_search/")).respond(400, json={"detail": "bad"})
     company_id = fake_hubspot.add("companies", {"domain": "acmeai.com"})
-    with pytest.raises(Exception):
+    with pytest.raises(ApiError):
         await service.enrich_company(company_id)
     props = fake_hubspot.props("companies", company_id)
     assert props["forager_enrichment_status"] == "failed"

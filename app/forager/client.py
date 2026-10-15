@@ -265,9 +265,7 @@ class ForagerClient:
 
     async def search_person_roles(self, query: dict[str, Any]) -> PersonRoleSearchResponse:
         """POST person_role_search/ — 1 credit per page."""
-        data = await self._paid_call(
-            "person_role_search", self._ds("person_role_search/"), query
-        )
+        data = await self._paid_call("person_role_search", self._ds("person_role_search/"), query)
         return PersonRoleSearchResponse.model_validate(data or {})
 
     async def person_role_totals(self, query: dict[str, Any]) -> PersonRoleSearchTotals:
@@ -355,8 +353,10 @@ class ForagerClient:
         self.budget.reserve(endpoint, cost)
         try:
             response = await self._send(
-                "POST", self._ds("person_contacts_lookup/work_emails/", v2=True),
-                json=body, idempotent=False,
+                "POST",
+                self._ds("person_contacts_lookup/work_emails/", v2=True),
+                json=body,
+                idempotent=False,
             )
         except ApiError:
             self.budget.release(cost)

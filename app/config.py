@@ -19,7 +19,10 @@ DEFAULT_TITLE_EXCLUDES = ["Intern", "Assistant", "Associate Director", "Former"]
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    # env_ignore_empty: `FORAGER_ACCOUNT_ID=` (blank) means "unset", not a parse error.
+    model_config = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8", extra="ignore", env_ignore_empty=True
+    )
 
     # --- General -------------------------------------------------------------------
     environment: str = "development"

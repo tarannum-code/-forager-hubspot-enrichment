@@ -202,6 +202,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "forager_configured": bool(
                     settings.forager_api_key and settings.forager_account_id
                 ),
+                "forager_account_id": settings.forager_account_id,
                 "hubspot_configured": bool(settings.hubspot_access_token),
                 "max_credits_per_event": settings.webhook_max_credits_per_event,
                 "max_credits_per_day": settings.webhook_max_credits_per_day,

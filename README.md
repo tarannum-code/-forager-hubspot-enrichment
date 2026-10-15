@@ -253,8 +253,20 @@ tests/                 pytest suite + fixtures
 - **Forager's free tier now gives 50 credits, not 150.** A complete contact costs about
   20 credits (phone is 15), so the demo budget is tight. The cache makes every lookup a
   one-time cost.
-- **Some people have no email or phone in Forager.** In that case the contact is marked
-  `partial`, and `forager_last_error` lists exactly which required field is missing.
+- **A complete contact costs about 20 credits, but email and phone misses are free.**
+  This was verified on live runs: a phone lookup is only charged when numbers come back,
+  and a work-email lookup only when an address is found.
+- **Some people have no email or phone in Forager.** Required fields still missing (such
+  as city or state) mark the contact `partial`, and `forager_last_error` names them.
+- **Forager's domain search can miss the canonical company.** A popular domain can
+  return many organizations: GPT pages for openai.com, or acquired companies such as
+  "Octane (We've joined Stripe!)", which Forager has renamed "Stripe" for stripe.com.
+  The service cross-checks Forager's free autocomplete (name + domain) and keeps the
+  best-scoring organization. In live testing, though, the canonical record didn't
+  always come back from the paid search. I'm also verifying whether Forager's `page`
+  parameter is 0-based: two domains returned `total_search_results: 10` with an empty
+  first page. If it is, the first page of every search was being skipped. That is the
+  next thing to confirm once more credits are available.
 - **Single replica.** The in-memory queue is fine for one replica. Scaling out would
   need a shared queue (e.g. Redis), but the HubSpot markers already keep processing
   idempotent across replicas.

@@ -7,7 +7,7 @@ A Python service that enriches HubSpot **companies** and **contacts** with
 job title, and runs automatically from **live HubSpot webhooks**.
 
 It is written as plain code, with no no-code tools. It is deployed on Railway and fully
-tested: 137 tests run against mocked APIs, so the tests never spend real Forager credits.
+tested: 141 tests run against mocked APIs, so the tests never spend real Forager credits.
 
 **Live service:** https://forager-hubspot-enrichment-production.up.railway.app/health
 
@@ -212,7 +212,7 @@ fires a second, paid webhook.
 ## Testing
 
 ```bash
-pytest                 # 137 tests, all HTTP mocked with respx: real Forager is never called
+pytest                 # 141 tests, all HTTP mocked with respx: real Forager is never called
 ruff check . && ruff format --check .
 mypy app               # strict
 ```

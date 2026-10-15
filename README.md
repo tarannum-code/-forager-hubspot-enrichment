@@ -19,7 +19,6 @@ tested: 137 tests run against mocked APIs, so the tests never spend real Forager
 | 4. Company webhook: enrich the company, then enrich its contacts or find new ones | `POST /webhooks/hubspot` → `process_company_created` |
 | 5. Contact webhook: enrich the new contact | `POST /webhooks/hubspot` → `process_contact_created` |
 | Extra details for discussion | [EXTRA_FIELDS.md](EXTRA_FIELDS.md) |
-| Video walkthrough script | [DEMO.md](DEMO.md) |
 
 ---
 

@@ -57,6 +57,10 @@ class Settings(BaseSettings):
     contact_titles: CsvList = Field(default_factory=lambda: list(DEFAULT_TITLES))
     contact_title_excludes: CsvList = Field(default_factory=lambda: list(DEFAULT_TITLE_EXCLUDES))
 
+    # A contact with only an email (no LinkedIn URL, no name+company) can be resolved
+    # with Forager's reverse email lookup (5 credits).
+    contact_reverse_email_lookup: bool = True
+
     # --- Webhook-driven enrichment (cost controls) ------------------------------------
     webhook_enrichment_enabled: bool = True
     webhook_max_credits_per_event: int = Field(default=25, ge=0)

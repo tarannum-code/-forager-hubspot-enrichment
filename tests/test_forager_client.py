@@ -140,9 +140,9 @@ async def test_work_email_not_found_costs_nothing(
     mock_router.post(forager_url("person_contacts_lookup/work_emails/", v2=True)).respond(
         202, json={"job_id": job_id, "status": "queued"}
     )
-    mock_router.get(
-        forager_url(f"person_contacts_lookup/work_emails/{job_id}/", v2=True)
-    ).respond(json=load_fixture("forager/work_email_not_found.json"))
+    mock_router.get(forager_url(f"person_contacts_lookup/work_emails/{job_id}/", v2=True)).respond(
+        json=load_fixture("forager/work_email_not_found.json")
+    )
 
     assert await forager.work_email(linkedin_slug="sam-lee-123") is None
     assert forager.budget.spent == 0
@@ -152,7 +152,9 @@ def test_work_email_accepts_string_entries() -> None:
     from app.forager.models import WorkEmailJob
 
     job = WorkEmailJob(
-        job_id="x", status="completed", result="found",
+        job_id="x",
+        status="completed",
+        result="found",
         emails=["a@b.com (valid)", "c@b.com - invalid", "junk"],
     )
     assert [(e.email, e.validation_status) for e in job.addresses()] == [

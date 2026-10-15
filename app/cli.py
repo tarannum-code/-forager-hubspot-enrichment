@@ -19,6 +19,7 @@ from rich.table import Table
 from app.config import ConfigError, Settings, get_settings
 from app.enrichment.candidates import rank_candidates
 from app.enrichment.matching import best_organization
+from app.enrichment.service import ContactLookupOptions, EnrichmentService, SelectionOutcome
 from app.enrichment.title_filter import TitleFilter
 from app.forager.client import ForagerClient
 from app.forager.credits import CREDIT_COSTS, CreditBudget, CreditBudgetExceeded
@@ -29,6 +30,8 @@ from app.hubspot.properties import ensure_properties
 from app.logging_config import configure_logging
 from app.normalize import (
     clean_job_title,
+    linkedin_person_url,
+    linkedin_slug,
     normalize_domain,
     parse_location,
     smart_name_case,
@@ -393,6 +396,328 @@ async def _find_contacts(
             f"rejected {len(rejected)}"
         )
         await _print_spend(forager, before)
+
+
+# ---------------------------------------------------------------------------- shared
+
+
+def _title_filter(settings: Settings, titles: str | None, exclude: str | None) -> TitleFilter:
+    return TitleFilter.from_lists(
+        titles.split(",") if titles is not None else settings.contact_titles,
+        exclude.split(",") if exclude is not None else settings.contact_title_excludes,
+    )
+
+
+def _show_properties(title: str, props: dict[str, Any]) -> None:
+    table = Table(title=title, show_header=False)
+    for key in sorted(props):
+        if key.startswith("forager_enrich") or key in ("forager_last_error",):
+            continue
+        table.add_row(key, str(props[key])[:120])
+    console.print(table)
+
+
+# ---------------------------------------------------------------------------- enrich-company
+
+
+@app.command("enrich-company")
+def enrich_company(
+    company_id: str | None = typer.Option(None, "--company-id", help="HubSpot company id."),
+    domain: str | None = typer.Option(
+        None, "--domain", "-d", help="Find the HubSpot company by domain (or create with --create)."
+    ),
+    create: bool = typer.Option(False, "--create", help="Create the company if it doesn't exist."),
+    force: bool = typer.Option(False, "--force", help="Re-enrich even if already enriched."),
+    max_credits: int | None = MaxCreditsOpt,
+    yes: bool = YesOpt,
+    no_cache: bool = NoCacheOpt,
+) -> None:
+    """Enrich one HubSpot company from Forager (1 credit unless cached)."""
+    if not company_id and not domain:
+        raise typer.BadParameter("Pass --company-id or --domain.")
+    _run(
+        _enrich_company(
+            get_settings(), company_id, domain, create, force, max_credits, yes, no_cache
+        )
+    )
+
+
+async def _enrich_company(
+    settings: Settings,
+    company_id: str | None,
+    domain: str | None,
+    create: bool,
+    force: bool,
+    max_credits: int | None,
+    yes: bool,
+    no_cache: bool,
+) -> None:
+    budget = _budget(settings, max_credits, f"enrich-company {company_id or domain}")
+    _confirm_spend([("organization_search", 1)], budget, yes)
+    async with (
+        _forager(settings, budget, no_cache) as forager,
+        HubSpotClient.from_settings(settings) as hubspot,
+    ):
+        service = EnrichmentService(forager, hubspot, settings)
+        before = await forager.credits_balance()
+        if not company_id:
+            clean = normalize_domain(domain)
+            if not clean:
+                raise typer.BadParameter(f"Not a valid domain: {domain}")
+            found = await hubspot.find_one("companies", "domain", clean, ["name"])
+            if found:
+                company_id = str(found["id"])
+            elif create:
+                created = await hubspot.create_object("companies", {"domain": clean})
+                company_id = str(created["id"])
+                console.print(f"Created HubSpot company {company_id} for {clean}")
+            else:
+                console.print(
+                    f"[yellow]No HubSpot company with domain {clean}. Use --create.[/yellow]"
+                )
+                raise typer.Exit(1)
+        result = await service.enrich_company(company_id, force=force)
+        console.print(f"Company {company_id}: [bold]{result.status}[/bold] {result.message}")
+        if result.properties:
+            _show_properties(f"Written to HubSpot company {company_id}", result.properties)
+        await _print_spend(forager, before)
+
+
+# ---------------------------------------------------------------------------- enrich-contact
+
+
+@app.command("enrich-contact")
+def enrich_contact(
+    contact_id: str | None = typer.Option(None, "--contact-id", help="HubSpot contact id."),
+    linkedin: str | None = typer.Option(
+        None, "--linkedin", help="Person LinkedIn URL: finds the contact, or creates it."
+    ),
+    email: bool = typer.Option(
+        True, "--email/--no-email", help="Look up work email (5 cr if found)."
+    ),
+    phone: bool = typer.Option(True, "--phone/--no-phone", help="Look up phone (15 cr)."),
+    personal_email: bool = typer.Option(False, "--personal-email", help="Also try personal email."),
+    force: bool = typer.Option(False, "--force", help="Re-enrich even if already enriched."),
+    max_credits: int | None = MaxCreditsOpt,
+    yes: bool = YesOpt,
+    no_cache: bool = NoCacheOpt,
+) -> None:
+    """Enrich one HubSpot contact: required fields + email/phone if available."""
+    if not contact_id and not linkedin:
+        raise typer.BadParameter("Pass --contact-id or --linkedin.")
+    options = ContactLookupOptions(work_email=email, personal_email=personal_email, phone=phone)
+    _run(
+        _enrich_contact(
+            get_settings(), contact_id, linkedin, options, force, max_credits, yes, no_cache
+        )
+    )
+
+
+async def _enrich_contact(
+    settings: Settings,
+    contact_id: str | None,
+    linkedin: str | None,
+    options: ContactLookupOptions,
+    force: bool,
+    max_credits: int | None,
+    yes: bool,
+    no_cache: bool,
+) -> None:
+    plan = [("person_detail_lookup", 1)]
+    if options.work_email:
+        plan.append(("work_email", 1))
+    if options.personal_email:
+        plan.append(("personal_email", 1))
+    if options.phone:
+        plan.append(("phone_numbers", 1))
+    budget = _budget(settings, max_credits, f"enrich-contact {contact_id or linkedin}")
+    _confirm_spend(plan, budget, yes)
+    async with (
+        _forager(settings, budget, no_cache) as forager,
+        HubSpotClient.from_settings(settings) as hubspot,
+    ):
+        service = EnrichmentService(forager, hubspot, settings)
+        before = await forager.credits_balance()
+        if not contact_id:
+            slug = linkedin_slug(linkedin)
+            if not slug:
+                raise typer.BadParameter(f"Not a LinkedIn profile URL: {linkedin}")
+            found = await service.find_contact_by_linkedin(slug)
+            if found:
+                contact_id = str(found["id"])
+            else:
+                created = await hubspot.create_object(
+                    "contacts", {"hs_linkedin_url": linkedin_person_url(slug)}
+                )
+                contact_id = str(created["id"])
+                console.print(f"Created HubSpot contact {contact_id} for {slug}")
+        result = await service.enrich_contact(contact_id, options, force=force)
+        console.print(f"Contact {contact_id}: [bold]{result.status}[/bold] {result.message}")
+        if result.properties:
+            _show_properties(f"Written to HubSpot contact {contact_id}", result.properties)
+        await _print_spend(forager, before)
+
+
+# ---------------------------------------------------------------------------- demo
+
+
+@app.command("demo-openai")
+def demo_openai(
+    domain: str = typer.Option("openai.com", "--domain", "-d", help="Company domain."),
+    people: int = typer.Option(5, "--people", "-n", min=1, max=25, help="Contacts to produce."),
+    titles: str | None = typer.Option(
+        None, "--titles", "-t", help="Title keywords (default: env)."
+    ),
+    exclude: str | None = typer.Option(None, "--exclude", "-x", help="Keywords to reject."),
+    pages: int = typer.Option(1, "--pages", min=1, max=5, help="Search pages (1 credit each)."),
+    require_phone: bool = typer.Option(
+        True, "--require-phone/--allow-no-phone", help="Only keep people with a phone."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Spend nothing; show what is cached and what would be bought."
+    ),
+    max_credits: int | None = MaxCreditsOpt,
+    yes: bool = YesOpt,
+    no_cache: bool = NoCacheOpt,
+) -> None:
+    """Primary deliverable: an enriched company + N complete contacts in HubSpot.
+
+    Candidates are ranked by profile quality; work email (5 cr, only if found) is bought
+    first and the phone (15 cr) only for people who have an email, so credits go to
+    people who will end up complete.
+    """
+    settings = get_settings()
+    _run(
+        _demo(
+            settings,
+            domain,
+            people,
+            _title_filter(settings, titles, exclude),
+            pages,
+            require_phone,
+            dry_run,
+            max_credits,
+            yes,
+            no_cache,
+        )
+    )
+
+
+async def _demo(
+    settings: Settings,
+    domain: str,
+    people: int,
+    title_filter: TitleFilter,
+    pages: int,
+    require_phone: bool,
+    dry_run: bool,
+    max_credits: int | None,
+    yes: bool,
+    no_cache: bool,
+) -> None:
+    clean = normalize_domain(domain)
+    if not clean:
+        raise typer.BadParameter(f"Not a valid domain: {domain}")
+    budget = _budget(settings, 0 if dry_run else max_credits, f"demo {clean}")
+    plan = [
+        ("organization_search", 1),
+        ("person_role_search", pages),
+        ("work_email", people),
+        ("phone_numbers", people if require_phone else 0),
+    ]
+    console.print(f"Title filter query: [cyan]{title_filter.to_forager_query()}[/cyan]")
+    if dry_run:
+        console.print("[bold]DRY RUN[/bold] - nothing is bought and nothing is written to HubSpot.")
+    else:
+        _confirm_spend(plan, budget, yes)
+    options = ContactLookupOptions(work_email=True, phone=require_phone, phone_requires_email=True)
+
+    async with (
+        _forager(settings, budget, no_cache) as forager,
+        HubSpotClient.from_settings(settings) as hubspot,
+    ):
+        service = EnrichmentService(forager, hubspot, settings)
+        before = await forager.credits_balance()
+        try:
+            org = await service.resolve_organization(domain=clean)
+            if org is None:
+                console.print(f"[red]Forager has no organization for {clean}[/red]")
+                raise typer.Exit(1)
+            accepted, rejected = await service.find_candidates(org, title_filter, pages=pages)
+        except CreditBudgetExceeded as exc:
+            console.print(f"[yellow]Company/people search not cached yet:[/yellow] {exc}")
+            raise typer.Exit(3) from exc
+        console.print(
+            f"{org.name}: {len(accepted)} candidates passed the filters ({len(rejected)} rejected)"
+        )
+
+        try:
+            outcomes = await service.select_complete_contacts(
+                org,
+                accepted,
+                wanted=people,
+                options=options,
+                require_email=True,
+                require_phone=require_phone,
+                dry_run=dry_run,
+            )
+        except CreditBudgetExceeded as exc:
+            console.print(f"[yellow]Budget reached:[/yellow] {exc}")
+            outcomes = []
+        _show_selection(outcomes)
+        selected = [o for o in outcomes if o.selected]
+
+        if dry_run:
+            pending = [o for o in outcomes if o.reason.startswith("needs paid")]
+            worst = len(pending) * (5 + (15 if require_phone else 0))
+            console.print(
+                f"Ready from cache: {len(selected)}/{people}. Up to {worst} credits would be "
+                f"needed to check {len(pending)} more candidate(s)."
+            )
+            await _print_spend(forager, before)
+            return
+
+        company_id, created = await service.ensure_company(org)
+        company = await service.enrich_company(company_id, claimed=created, force=not created)
+        console.print(f"HubSpot company {company_id} ({org.name}): [bold]{company.status}[/bold]")
+        results = await service.write_selected(company_id, selected)
+        table = Table(title=f"HubSpot contacts under {org.name}")
+        for column in ("Contact id", "Status", "Name", "Email", "Phone", "City/State/Country"):
+            table.add_column(column)
+        for result in results:
+            p = result.properties
+            table.add_row(
+                result.object_id,
+                result.status,
+                f"{p.get('firstname', '')} {p.get('lastname', '')}",
+                p.get("email", "-"),
+                p.get("phone", "-"),
+                ", ".join(filter(None, [p.get("city"), p.get("state"), p.get("country")])),
+            )
+        console.print(table)
+        if len(selected) < people:
+            console.print(
+                f"[yellow]Only {len(selected)}/{people} complete contacts. Re-run with more "
+                "--max-credits or --pages to continue (bought lookups are cached).[/yellow]"
+            )
+        await _print_spend(forager, before)
+
+
+def _show_selection(outcomes: list[SelectionOutcome]) -> None:
+    table = Table(title="Candidate selection (best profiles first)")
+    for column in ("Name", "Title", "Email", "Phone", "Result"):
+        table.add_column(column)
+    for outcome in outcomes:
+        data = outcome.data
+        first, last = data.names() if data else (None, None)
+        table.add_row(
+            " ".join(filter(None, [first, last])),
+            clean_job_title(outcome.candidate.row.role_title) or "",
+            (data.email if data else None) or "-",
+            (data.phone if data else None) or "-",
+            "[green]selected[/green]" if outcome.selected else outcome.reason,
+        )
+    console.print(table)
 
 
 def main() -> None:

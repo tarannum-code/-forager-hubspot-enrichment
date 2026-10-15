@@ -28,7 +28,8 @@ async def test_update_drops_unknown_and_empty_properties(
         "contacts", "101", {"firstname": "Jane", "city": "", "made_up": "x", "lastname": None}
     )
     sent = json.loads(patch.calls.last.request.content)
-    assert sent == {"properties": {"firstname": "Jane"}}
+    # None and unknown properties dropped; "" kept (that is how HubSpot clears a field).
+    assert sent == {"properties": {"firstname": "Jane", "city": ""}}
     assert patch.calls.last.request.headers["Authorization"] == "Bearer test-token"
 
 
@@ -75,5 +76,7 @@ async def test_search_and_429_retry(hubspot: HubSpotClient, mock_router: respx.M
     assert found == {"id": "5", "properties": {"domain": "acmeai.com"}}
     body = json.loads(route.calls.last.request.content)
     assert body["filterGroups"][0]["filters"][0] == {
-        "propertyName": "domain", "operator": "EQ", "value": "acmeai.com"
+        "propertyName": "domain",
+        "operator": "EQ",
+        "value": "acmeai.com",
     }

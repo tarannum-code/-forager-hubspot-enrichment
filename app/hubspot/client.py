@@ -249,11 +249,11 @@ class HubSpotClient:
     async def filter_known_properties(
         self, object_type: str, properties: dict[str, Any]
     ) -> dict[str, Any]:
-        """Drop empty values and properties this portal doesn't have (HubSpot would 400)."""
+        """Drop None values and properties this portal lacks (HubSpot would reject the call)."""
         known = await self.property_names(object_type)
         clean: dict[str, Any] = {}
         for name, value in properties.items():
-            if value is None or value == "":
+            if value is None:  # "" is kept: it is how HubSpot clears a value
                 continue
             if name not in known:
                 logger.warning(

@@ -8,7 +8,8 @@ import sys
 from datetime import UTC, datetime
 from typing import Any
 
-_RESERVED = set(vars(logging.makeLogRecord({})).keys()) | {"message", "asctime"}
+# color_message: uvicorn's ANSI-coloured duplicate of the message.
+_RESERVED = set(vars(logging.makeLogRecord({})).keys()) | {"message", "asctime", "color_message"}
 
 
 class JsonFormatter(logging.Formatter):
@@ -37,7 +38,8 @@ class TextFormatter(logging.Formatter):
 
 
 def configure_logging(level: str = "INFO", json_logs: bool = False) -> None:
-    handler = logging.StreamHandler(sys.stderr)
+    # stdout: Railway shows stderr lines as errors regardless of their level.
+    handler = logging.StreamHandler(sys.stdout)
     if json_logs:
         handler.setFormatter(JsonFormatter())
     else:
@@ -47,6 +49,11 @@ def configure_logging(level: str = "INFO", json_logs: bool = False) -> None:
     root = logging.getLogger()
     root.handlers[:] = [handler]
     root.setLevel(level.upper())
+    # Route uvicorn's own loggers through the same handler, so every line has one format.
+    for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        uvicorn_logger = logging.getLogger(name)
+        uvicorn_logger.handlers.clear()
+        uvicorn_logger.propagate = True
     # httpx logs full URLs at INFO; keep it quiet (URLs carry no secrets, but it is noisy).
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)

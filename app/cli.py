@@ -17,12 +17,20 @@ from rich.console import Console
 from rich.table import Table
 
 from app.config import ConfigError, Settings, get_settings
+from app.enrichment.title_filter import TitleFilter
 from app.forager.client import ForagerClient
-from app.forager.credits import CreditBudget
+from app.forager.credits import CREDIT_COSTS, CreditBudget, CreditBudgetExceeded
 from app.http_utils import ApiError
 from app.hubspot.client import HubSpotClient
 from app.hubspot.properties import ensure_properties
 from app.logging_config import configure_logging
+from app.normalize import (
+    clean_job_title,
+    linkedin_slug,
+    normalize_domain,
+    parse_location,
+    smart_name_case,
+)
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, help=__doc__)
 console = Console()
@@ -38,6 +46,9 @@ def _run(coro: Coroutine[Any, Any, T]) -> T:
     except ApiError as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(1) from exc
+    except CreditBudgetExceeded as exc:
+        console.print(f"[yellow]Stopped before spending:[/yellow] {exc}")
+        raise typer.Exit(3) from exc
 
 
 @app.callback()
@@ -162,6 +173,217 @@ async def _setup_hubspot(settings: Settings) -> None:
     console.print(table)
     if any(action.startswith("CONFLICT") for *_, action in report):
         raise typer.Exit(1)
+
+
+# ---------------------------------------------------------------------------- credit helpers
+
+MaxCreditsOpt = typer.Option(
+    None,
+    "--max-credits",
+    help="Most Forager credits this run may spend (default: FORAGER_MAX_CREDITS_PER_RUN).",
+)
+YesOpt = typer.Option(False, "--yes", "-y", help="Skip the spend confirmation prompt.")
+NoCacheOpt = typer.Option(
+    False, "--no-cache", help="Ignore cached Forager responses (forces real, paid calls)."
+)
+
+
+def _budget(settings: Settings, max_credits: int | None, label: str) -> CreditBudget:
+    limit = settings.forager_max_credits_per_run if max_credits is None else max_credits
+    ledger = settings.forager_cache_dir.parent / "credit_ledger.jsonl"
+    return CreditBudget(limit=limit, label=label, ledger_path=ledger)
+
+
+def _confirm_spend(plan: list[tuple[str, int]], budget: CreditBudget, yes: bool) -> None:
+    """Print the worst-case cost of the planned paid calls and ask before spending."""
+    worst = sum(CREDIT_COSTS[endpoint] * count for endpoint, count in plan)
+    calls = ", ".join(f"{n} x {ep} ({CREDIT_COSTS[ep]} cr)" for ep, n in plan)
+    console.print(
+        f"[bold]Planned Forager calls:[/bold] {calls} -> worst case [bold]{worst}[/bold] "
+        f"credits (cached lookups are free). Run budget: {budget.limit}."
+    )
+    if budget.limit == 0:
+        console.print(
+            "[yellow]Budget is 0: only cached results can be shown. Pass --max-credits N.[/yellow]"
+        )
+    elif not yes and not typer.confirm("Proceed?", default=False):
+        raise typer.Exit(0)
+
+
+def _forager(settings: Settings, budget: CreditBudget, no_cache: bool) -> ForagerClient:
+    client = ForagerClient.from_settings(settings, budget)
+    if no_cache:
+        client.cache.enabled = False
+    return client
+
+
+async def _print_spend(forager: ForagerClient, before: float | None) -> None:
+    after = await forager.credits_balance()
+    console.print(
+        f"Credits spent this run (our accounting): [bold]{forager.budget.spent}[/bold] | "
+        f"account balance {before} -> {after}"
+    )
+
+
+# ---------------------------------------------------------------------------- lookup-company
+
+
+@app.command("lookup-company")
+def lookup_company(
+    domain: str = typer.Option(..., "--domain", "-d", help="Company domain, e.g. openai.com"),
+    max_credits: int | None = MaxCreditsOpt,
+    yes: bool = YesOpt,
+    no_cache: bool = NoCacheOpt,
+) -> None:
+    """Show what Forager knows about a company (1 credit, no HubSpot writes)."""
+    _run(_lookup_company(get_settings(), domain, max_credits, yes, no_cache))
+
+
+async def _lookup_company(
+    settings: Settings, domain: str, max_credits: int | None, yes: bool, no_cache: bool
+) -> None:
+    clean = normalize_domain(domain)
+    if not clean:
+        raise typer.BadParameter(f"Not a valid domain: {domain}")
+    budget = _budget(settings, max_credits, f"lookup-company {clean}")
+    _confirm_spend([("organization_search", 1)], budget, yes)
+    async with _forager(settings, budget, no_cache) as forager:
+        before = await forager.credits_balance()
+        result = await forager.search_organizations(domains=[clean])
+        if not result.search_results:
+            console.print(f"[yellow]Forager has no organization for {clean}[/yellow]")
+        for org in result.search_results[:3]:
+            loc = parse_location(org.location)
+            linkedin = org.linkedin_info
+            rows = {
+                "Domain": org.domain,
+                "Website": org.website,
+                "LinkedIn": linkedin.public_profile_url if linkedin else None,
+                "Industry": linkedin.industry.name if linkedin and linkedin.industry else None,
+                "Employees": f"{org.employees_amount} ({org.employees_range})",
+                "Revenue": org.finance_info.revenue if org.finance_info else None,
+                "Founded": org.founded_date,
+                "HQ": ", ".join(filter(None, [loc.city, loc.state, loc.country])),
+                "Description": (org.description or "")[:300],
+            }
+            table = Table(title=f"{org.name} (Forager id {org.id})", show_header=False)
+            for key, value in rows.items():
+                table.add_row(key, str(value))
+            console.print(table)
+        console.print(f"Total matches: {result.total_search_results}")
+        await _print_spend(forager, before)
+
+
+# ---------------------------------------------------------------------------- find-contacts
+
+
+@app.command("find-contacts")
+def find_contacts(
+    domain: str = typer.Option(..., "--domain", "-d", help="Company domain, e.g. openai.com"),
+    titles: str | None = typer.Option(
+        None, "--titles", "-t", help='Title keywords, e.g. "VP,Head of,Chief" (default: env).'
+    ),
+    exclude: str | None = typer.Option(
+        None, "--exclude", "-x", help='Keywords to reject, e.g. "Intern" (default: env).'
+    ),
+    pages: int = typer.Option(1, "--pages", min=1, max=10, help="Result pages, 1 credit each."),
+    show_rejected: bool = typer.Option(False, "--show-rejected", help="List filtered-out people."),
+    max_credits: int | None = MaxCreditsOpt,
+    yes: bool = YesOpt,
+    no_cache: bool = NoCacheOpt,
+) -> None:
+    """Discover people at a company filtered by job title (1 credit/page, no HubSpot writes)."""
+    settings = get_settings()
+    title_filter = TitleFilter.from_lists(
+        titles.split(",") if titles is not None else settings.contact_titles,
+        exclude.split(",") if exclude is not None else settings.contact_title_excludes,
+    )
+    _run(
+        _find_contacts(
+            settings, domain, title_filter, pages, show_rejected, max_credits, yes, no_cache
+        )
+    )
+
+
+async def _find_contacts(
+    settings: Settings,
+    domain: str,
+    title_filter: TitleFilter,
+    pages: int,
+    show_rejected: bool,
+    max_credits: int | None,
+    yes: bool,
+    no_cache: bool,
+) -> None:
+    clean = normalize_domain(domain)
+    if not clean:
+        raise typer.BadParameter(f"Not a valid domain: {domain}")
+    console.print(
+        f"Title filter: include {list(title_filter.include)} | "
+        f"exclude {list(title_filter.exclude)}\n"
+        f"Forager role_title query: [cyan]{title_filter.to_forager_query()}[/cyan]"
+    )
+    budget = _budget(settings, max_credits, f"find-contacts {clean}")
+    _confirm_spend([("person_role_search", pages)], budget, yes)
+
+    async with _forager(settings, budget, no_cache) as forager:
+        before = await forager.credits_balance()
+        kept: list[Any] = []
+        rejected: list[tuple[Any, str]] = []
+        seen: set[int] = set()
+        total = 0
+        for page in range(1, pages + 1):
+            query = forager.person_role_query(
+                role_title=title_filter.to_forager_query(),
+                organization_domains=[clean],
+                page=page,
+            )
+            result = await forager.search_person_roles(query)
+            total = result.total_search_results
+            for row in result.search_results:
+                if row.person.id in seen:
+                    continue
+                seen.add(row.person.id)
+                org_domain = normalize_domain(row.organization.domain) if row.organization else None
+                if org_domain != clean:
+                    rejected.append((row, f"works at {org_domain}"))
+                elif not title_filter.matches(row.role_title):
+                    rejected.append((row, "title filter"))
+                else:
+                    kept.append(row)
+            if not result.search_results:
+                break
+
+        kept.sort(key=lambda r: title_filter.rank(r.role_title))
+        table = Table(title=f"People at {clean} matching the title filter ({len(kept)})")
+        for column in ("#", "Name", "Title", "Location", "LinkedIn"):
+            table.add_column(column)
+        for i, row in enumerate(kept, 1):
+            person = row.person
+            loc = parse_location(person.location)
+            first, last = smart_name_case(person.first_name), smart_name_case(person.last_name)
+            name = " ".join(filter(None, [first, last]))
+            url = person.linkedin_info.public_profile_url if person.linkedin_info else None
+            table.add_row(
+                str(i),
+                name,
+                clean_job_title(row.role_title) or "",
+                ", ".join(filter(None, [loc.city, loc.state, loc.country])),
+                linkedin_slug(url) or "",
+            )
+        console.print(table)
+        if show_rejected and rejected:
+            rejected_table = Table(title=f"Filtered out ({len(rejected)})")
+            for column in ("Name", "Title", "Reason"):
+                rejected_table.add_column(column)
+            for row, reason in rejected:
+                rejected_table.add_row(row.person.full_name or "", row.role_title or "", reason)
+            console.print(rejected_table)
+        console.print(
+            f"Forager matches for this query: {total} | kept {len(kept)}, "
+            f"rejected {len(rejected)}"
+        )
+        await _print_spend(forager, before)
 
 
 def main() -> None:

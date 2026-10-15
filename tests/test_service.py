@@ -12,7 +12,7 @@ from app.config import Settings
 from app.enrichment.service import ContactLookupOptions, EnrichmentService
 from app.enrichment.title_filter import TitleFilter
 from app.forager.client import ForagerClient
-from app.forager.credits import CreditBudget, CreditBudgetExceeded
+from app.forager.credits import CreditBudget
 from app.http_utils import ApiError
 from tests.conftest import forager_url, load_fixture
 from tests.fakes import FakeHubSpot
@@ -332,10 +332,11 @@ async def test_dry_run_reports_instead_of_spending(
         org, accepted, wanted=5, options=FULL, require_email=True, require_phone=True, dry_run=True
     )
     assert outcomes[0].reason == "needs paid lookups (work_email)"
-    with pytest.raises(CreditBudgetExceeded):
-        await service.select_complete_contacts(
-            org, accepted, wanted=5, options=FULL, require_email=True, require_phone=True
-        )
+    # A real run stops at the budget and returns what it has, instead of losing it.
+    outcomes = await service.select_complete_contacts(
+        org, accepted, wanted=5, options=FULL, require_email=True, require_phone=True
+    )
+    assert [o.reason for o in outcomes] == ["budget reached (work_email)"]
 
 
 # ----------------------------------------------------------------------- robustness

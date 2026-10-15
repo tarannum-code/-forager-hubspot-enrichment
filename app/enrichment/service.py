@@ -640,7 +640,8 @@ class EnrichmentService:
         dry_run: bool = False,
     ) -> list[SelectionOutcome]:
         """Walk candidates best-first, buying contact data until `wanted` people have the
-        required fields. In dry-run, uncached lookups are reported instead of bought."""
+        required fields. In dry-run, uncached lookups are reported instead of bought; in a
+        real run, hitting the credit budget stops the walk and returns what was selected."""
         outcomes: list[SelectionOutcome] = []
         selected = 0
         for candidate in candidates:
@@ -651,8 +652,11 @@ class EnrichmentService:
                 await self.lookup_contact_info(data, options)
             except CreditBudgetExceeded as exc:
                 if not dry_run:
-                    outcomes.append(SelectionOutcome(candidate, data, False, str(exc)))
-                    raise
+                    # Stop here, but keep what was already selected so it still gets written.
+                    outcomes.append(
+                        SelectionOutcome(candidate, data, False, f"budget reached ({exc.endpoint})")
+                    )
+                    break
                 outcomes.append(
                     SelectionOutcome(candidate, data, False, f"needs paid lookups ({exc.endpoint})")
                 )

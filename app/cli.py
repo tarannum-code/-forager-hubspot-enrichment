@@ -651,19 +651,15 @@ async def _demo(
             f"{org.name}: {len(accepted)} candidates passed the filters ({len(rejected)} rejected)"
         )
 
-        try:
-            outcomes = await service.select_complete_contacts(
-                org,
-                accepted,
-                wanted=people,
-                options=options,
-                require_email=True,
-                require_phone=require_phone,
-                dry_run=dry_run,
-            )
-        except CreditBudgetExceeded as exc:
-            console.print(f"[yellow]Budget reached:[/yellow] {exc}")
-            outcomes = []
+        outcomes = await service.select_complete_contacts(
+            org,
+            accepted,
+            wanted=people,
+            options=options,
+            require_email=True,
+            require_phone=require_phone,
+            dry_run=dry_run,
+        )
         _show_selection(outcomes)
         selected = [o for o in outcomes if o.selected]
 

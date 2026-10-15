@@ -35,6 +35,7 @@ from app.enrichment.title_filter import TitleFilter
 from app.forager.client import ForagerClient
 from app.forager.credits import CreditBudgetExceeded
 from app.forager.models import Organization, PersonDetail, PersonRoleSearchResult
+from app.http_utils import ApiError
 from app.hubspot.client import HubSpotClient
 from app.hubspot.properties import (
     SOURCE_CLI,
@@ -221,9 +222,16 @@ class EnrichmentService:
         slug = linkedin_slug(linkedin_url, "company") if linkedin_url else None
         if domain:
             result = await self.forager.search_organizations(domains=[domain])
-            return best_organization(
-                result.search_results, domain=domain, linkedin_url=linkedin_url
+            best = best_organization(
+                result.search_results, domain=domain, linkedin_url=linkedin_url, name=name
             )
+            if name and (best is None or not _same_name(best.name, name)):
+                # The domain may belong to an acquired company too (e.g. "Octane (We've
+                # joined Stripe!)" for stripe.com): look the company up by name instead.
+                matched = await self._organization_by_name_and_domain(name, domain)
+                if matched is not None:
+                    return matched
+            return best
         if slug:
             result = await self.forager.search_organizations(linkedin_public_identifiers=[slug])
             return best_organization(result.search_results, linkedin_url=linkedin_url)
@@ -237,6 +245,21 @@ class EnrichmentService:
             item = pool[0]
             result = await self.forager.search_organizations(organization_ids=[int(item.id)])
             return best_organization(result.search_results, domain=item.domain)
+        return None
+
+    async def _organization_by_name_and_domain(self, name: str, domain: str) -> Organization | None:
+        """Free autocomplete, then 1 paid search by id, when an entry matches both the
+        name and the domain. Avoids picking an acquired company that shares the domain."""
+        try:
+            items = await self.forager.autocomplete_organizations(name)
+        except ApiError:
+            logger.warning("Autocomplete failed; falling back to domain search")
+            return None
+        for item in items:
+            same_domain = normalize_domain(item.domain) == domain
+            if same_domain and _same_name(item.name, name) and item.id.isdigit():
+                result = await self.forager.search_organizations(organization_ids=[int(item.id)])
+                return next((o for o in result.search_results if str(o.id) == item.id), None)
         return None
 
     async def enrich_company(
@@ -683,6 +706,10 @@ class EnrichmentService:
                     await self.upsert_contact(outcome.data, company_id=company_id, source=source)
                 )
         return results
+
+
+def _same_name(a: str | None, b: str | None) -> bool:
+    return bool(a and b) and str(a).strip().casefold() == str(b).strip().casefold()
 
 
 def _error_note(exc: BaseException) -> str:

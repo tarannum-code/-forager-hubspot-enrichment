@@ -34,6 +34,9 @@ def service(forager: ForagerClient, fake_hubspot: FakeHubSpot) -> EnrichmentServ
 
 def mock_forager(router: respx.MockRouter) -> dict[str, respx.Route]:
     routes = {
+        "autocomplete": router.get(forager_url("autocomplete/organizations/")).respond(
+            json=load_fixture("forager/autocomplete_organizations.json")
+        ),
         "org": router.post(forager_url("organization_search/")).respond(
             json=load_fixture("forager/organization_search.json")
         ),
@@ -387,3 +390,40 @@ async def test_upsert_reuses_contact_with_same_email(
     assert result.object_id == existing_id
     assert fake_hubspot.creates == []
     assert fake_hubspot.props("contacts", existing_id)["firstname"] == "J"  # identity kept
+
+
+async def test_acquired_company_sharing_the_domain_is_not_picked(
+    service: EnrichmentService, fake_hubspot: FakeHubSpot, mock_router: respx.MockRouter
+) -> None:
+    routes = mock_forager(mock_router)
+    acquired = {
+        "id": 900,
+        "name": "Octane (We've joined Acme AI!)",
+        "domain": "acmeai.com",
+        "website": "https://acmeai.com",
+        "employees_amount": 2,
+    }
+    routes["org"].side_effect = [
+        httpx.Response(200, json={"search_results": [acquired], "total_search_results": 1}),
+        httpx.Response(200, json=load_fixture("forager/organization_search.json")),
+    ]
+    company_id = fake_hubspot.add("companies", {"name": "Acme AI", "domain": "acmeai.com"})
+
+    result = await service.enrich_company(company_id)
+
+    # Domain search found only the acquired company; the free autocomplete found the
+    # real one by name + domain, then it was fetched by id.
+    assert result.organization is not None and result.organization.id == 501
+    assert routes["autocomplete"].call_count == 1
+    assert b'"organization_ids":[501]' in routes["org"].calls.last.request.content
+    assert service.forager.budget.spent == 2
+
+
+async def test_matching_name_needs_no_autocomplete(
+    service: EnrichmentService, fake_hubspot: FakeHubSpot, mock_router: respx.MockRouter
+) -> None:
+    routes = mock_forager(mock_router)
+    company_id = fake_hubspot.add("companies", {"name": "Acme AI", "domain": "acmeai.com"})
+    await service.enrich_company(company_id)
+    assert routes["autocomplete"].call_count == 0
+    assert service.forager.budget.spent == 1

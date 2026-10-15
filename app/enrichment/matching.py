@@ -4,6 +4,11 @@ Real-world finding: searching `domains=["openai.com"]` returns 37 organizations,
 every custom GPT page (chat.openai.com/g/...) is listed with domain openai.com. The real
 company is the one whose website *is* the domain (no deep path), that owns the matching
 LinkedIn page, and that has by far the most employees.
+
+Second finding: acquired companies keep the parent's domain. `domains=["stripe.com"]`
+returned "Octane (We've joined Stripe!)" (2 employees) and not Stripe itself, so a
+matching company *name* is also rewarded, and the service first tries an exact
+name + domain match via Forager's free autocomplete.
 """
 
 from __future__ import annotations
@@ -17,9 +22,15 @@ from app.normalize import linkedin_slug, normalize_domain
 
 
 def score_organization(
-    org: Organization, *, domain: str | None = None, linkedin_id: str | None = None
+    org: Organization,
+    *,
+    domain: str | None = None,
+    linkedin_id: str | None = None,
+    name: str | None = None,
 ) -> float:
     score = 0.0
+    if name and (org.name or "").strip().casefold() == name.strip().casefold():
+        score += 150
     org_linkedin = (org.linkedin_info.public_identifier or "") if org.linkedin_info else ""
     if linkedin_id and org_linkedin.lower() == linkedin_id.lower():
         score += 1000
@@ -47,6 +58,7 @@ def best_organization(
     *,
     domain: str | None = None,
     linkedin_url: str | None = None,
+    name: str | None = None,
 ) -> Organization | None:
     if not candidates:
         return None
@@ -54,5 +66,7 @@ def best_organization(
     linkedin_id = linkedin_slug(linkedin_url, "company") if linkedin_url else None
     return max(
         candidates,
-        key=lambda org: score_organization(org, domain=clean_domain, linkedin_id=linkedin_id),
+        key=lambda org: score_organization(
+            org, domain=clean_domain, linkedin_id=linkedin_id, name=name
+        ),
     )

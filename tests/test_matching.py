@@ -71,3 +71,22 @@ def test_parse_location_real_forager_shape() -> None:
 def test_parse_location_lowercase_display_fallback() -> None:
     loc = parse_location({"name": "san francisco, united states", "osm_locations": []})
     assert (loc.city, loc.country) == ("San Francisco", "United States")
+
+
+def test_company_name_beats_acquired_company_sharing_the_domain() -> None:
+    acquired = Organization(
+        id=1,
+        name="Octane (We've joined Stripe!)",
+        domain="stripe.com",
+        website="https://stripe.com",
+        employees_amount=2,
+    )
+    parent = Organization(
+        id=2,
+        name="Stripe",
+        domain="stripe.com",
+        website="https://stripe.com/payments",
+        employees_amount=2,
+    )
+    best = best_organization([acquired, parent], domain="stripe.com", name="Stripe")
+    assert best is not None and best.id == 2

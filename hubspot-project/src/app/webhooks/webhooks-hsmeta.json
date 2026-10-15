@@ -3,7 +3,7 @@
   "type": "webhooks",
   "config": {
     "settings": {
-      "targetUrl": "https://REPLACE-WITH-YOUR-RAILWAY-DOMAIN/webhooks/hubspot",
+      "targetUrl": "https://forager-hubspot-enrichment-production.up.railway.app/webhooks/hubspot",
       "maxConcurrentRequests": 10
     },
     "subscriptions": {

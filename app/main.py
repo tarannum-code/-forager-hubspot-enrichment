@@ -109,6 +109,18 @@ class EventProcessor:
             return JobOutcome("budget_exceeded", forager.budget.spent, str(exc))
 
 
+def _cache_writable(directory: Path) -> bool:
+    """Whether the Forager cache / credit ledger can be written (e.g. the volume mount)."""
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        probe = directory / ".health-probe"
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink()
+        return True
+    except OSError:
+        return False
+
+
 def _signed_uri(request: Request, settings: Settings) -> str:
     """Rebuild the URL HubSpot signed. Behind Railway's proxy the app sees http://, so we
     prefer PUBLIC_BASE_URL, then X-Forwarded-* headers."""
@@ -178,8 +190,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "webhooks": {
                 "enabled": settings.webhook_enrichment_enabled,
                 "signature_verification": bool(settings.hubspot_client_secret),
+                "public_base_url": settings.public_base_url,
                 "worker_running": worker is not None,
                 "queue_size": worker.queue_size if worker else 0,
+            },
+            "storage": {
+                "cache_dir": str(settings.forager_cache_dir),
+                "writable": _cache_writable(settings.forager_cache_dir),
             },
             "config": {
                 "forager_configured": bool(

@@ -140,6 +140,8 @@ def test_health(client: TestClient) -> None:
     assert body["status"] == "ok"
     assert body["webhooks"]["signature_verification"] is True
     assert body["webhooks"]["worker_running"] is True
+    assert body["webhooks"]["public_base_url"] == PUBLIC
+    assert body["storage"]["writable"] is True
 
 
 def test_unsigned_request_is_rejected(client: TestClient, processed: list[str]) -> None:

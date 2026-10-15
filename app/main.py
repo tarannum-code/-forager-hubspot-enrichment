@@ -5,6 +5,7 @@ Run locally:  uvicorn app.main:app --reload
 
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 from collections.abc import AsyncIterator
@@ -194,9 +195,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             },
         }
 
+    def require_admin(request: Request) -> None:
+        if settings.admin_token is None:
+            if settings.environment == "production":
+                raise HTTPException(403, "set ADMIN_TOKEN to enable this endpoint")
+            return
+        expected = f"Bearer {settings.admin_token.get_secret_value()}"
+        given = request.headers.get("authorization", "")
+        if not hmac.compare_digest(given.encode(), expected.encode()):
+            raise HTTPException(401, "missing or invalid admin token")
+
     @app.get("/jobs")
     async def jobs(request: Request) -> dict[str, Any]:
         """Recent webhook jobs (ids, status, credits only - no personal data)."""
+        require_admin(request)
         worker: WebhookWorker | None = request.app.state.worker
         return {"jobs": worker.recent() if worker else []}
 

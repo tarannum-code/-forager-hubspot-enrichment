@@ -50,6 +50,9 @@ class Settings(BaseSettings):
     # Public base URL HubSpot calls (used to rebuild the signed URI behind proxies).
     public_base_url: str | None = None
     webhook_max_timestamp_skew_seconds: int = 300
+    # Protects the /jobs endpoint (send `Authorization: Bearer <token>`). When unset,
+    # /jobs is open in development and disabled in production.
+    admin_token: SecretStr | None = None
 
     # --- Contact discovery -------------------------------------------------------------
     contact_titles: CsvList = Field(default_factory=lambda: list(DEFAULT_TITLES))

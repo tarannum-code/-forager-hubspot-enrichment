@@ -240,3 +240,29 @@ def test_daily_webhook_credit_cap_limits_event_budget(tmp_path: Path) -> None:
     processor = EventProcessor(settings, None, httpx.AsyncClient())  # type: ignore[arg-type]
     assert processor.credits_spent_today() == 21
     assert processor._forager("webhook contact:2").budget.limit == 9  # 30 - 21, not 25
+
+
+def _app_with(**overrides: object) -> TestClient:
+    settings = Settings(
+        _env_file=None,  # type: ignore[call-arg]
+        hubspot_client_secret=SECRET,
+        public_base_url=PUBLIC,
+        **overrides,  # type: ignore[arg-type]
+    )
+    return TestClient(create_app(settings))
+
+
+def test_jobs_requires_admin_token_when_configured() -> None:
+    with _app_with(admin_token="s3cret") as client:
+        assert client.get("/jobs").status_code == 401
+        bad = client.get("/jobs", headers={"Authorization": "Bearer nope"})
+        assert bad.status_code == 401
+        ok = client.get("/jobs", headers={"Authorization": "Bearer s3cret"})
+        assert ok.status_code == 200 and ok.json() == {"jobs": []}
+
+
+def test_jobs_disabled_in_production_without_token() -> None:
+    with _app_with(environment="production") as client:
+        assert client.get("/jobs").status_code == 403
+    with _app_with(environment="development") as client:
+        assert client.get("/jobs").status_code == 200

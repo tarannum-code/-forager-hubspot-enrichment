@@ -8,6 +8,7 @@ from __future__ import annotations
 import hmac
 import json
 import logging
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -186,6 +187,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {
             "status": "ok",
             "version": __version__,
+            # Set by Railway on every deploy; shows which commit is live.
+            "commit": os.environ.get("RAILWAY_GIT_COMMIT_SHA", "")[:7] or None,
             "environment": settings.environment,
             "webhooks": {
                 "enabled": settings.webhook_enrichment_enabled,

@@ -513,7 +513,9 @@ class EnrichmentService:
             created = await self.hubspot.create_object("contacts", final)
             contact_id = str(created["id"])
         await self.associate_with_employer(contact_id, data, company_id)
-        return EnrichmentResult("contact", contact_id, status, final["forager_last_error"], final)
+        # Report the record as it now stands, including identity fields we left untouched.
+        merged = {**existing_props, **final}
+        return EnrichmentResult("contact", contact_id, status, final["forager_last_error"], merged)
 
     # ================================================================== webhook flows
 

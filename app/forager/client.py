@@ -300,10 +300,14 @@ class ForagerClient:
     async def phone_numbers(
         self, *, person_id: int | None = None, linkedin_slug: str | None = None
     ) -> list[PhoneNumber]:
-        """POST person_contacts_lookup/phone_numbers/ — 15 credits."""
+        """POST person_contacts_lookup/phone_numbers/ — 15 credits, free when empty."""
         body = self.person_ref(person_id=person_id, linkedin_slug=linkedin_slug)
         data = await self._paid_call(
-            "phone_numbers", self._ds("person_contacts_lookup/phone_numbers/"), body
+            "phone_numbers",
+            self._ds("person_contacts_lookup/phone_numbers/"),
+            body,
+            # Verified on a live run: two empty answers left the balance untouched.
+            charged=lambda d: CREDIT_COSTS["phone_numbers"] if d else 0,
         )
         return [PhoneNumber.model_validate(p) for p in data or [] if p.get("phone_number")]
 

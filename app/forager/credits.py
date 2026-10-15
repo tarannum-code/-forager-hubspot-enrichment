@@ -26,7 +26,7 @@ CREDIT_COSTS: dict[str, int] = {
     "person_reverse_email": 5,
     "work_email": 5,  # charged only when an address is found (per API docs)
     "personal_email": 5,  # free when the result set is empty (per API docs)
-    "phone_numbers": 15,  # docs don't say a miss is free -> assume always charged
+    "phone_numbers": 15,  # charged only when numbers are returned (verified live)
 }
 FREE_ENDPOINTS = frozenset({"autocomplete_organizations", "current_user", "balance_logs"})
 

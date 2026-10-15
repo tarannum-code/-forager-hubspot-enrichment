@@ -62,6 +62,14 @@ async def test_phone_lookup(forager: ForagerClient, mock_router: respx.MockRoute
     assert forager.budget.spent == 15
 
 
+async def test_empty_phone_lookup_is_free(
+    forager: ForagerClient, mock_router: respx.MockRouter
+) -> None:
+    mock_router.post(forager_url("person_contacts_lookup/phone_numbers/")).respond(json=[])
+    assert await forager.phone_numbers(linkedin_slug="jane-doe-smith") == []
+    assert forager.budget.spent == 0
+
+
 async def test_not_found_is_cached_and_free(
     forager: ForagerClient, mock_router: respx.MockRouter
 ) -> None:

@@ -35,7 +35,8 @@ class CreditBudgetExceeded(RuntimeError):
     def __init__(self, endpoint: str, cost: int, remaining: int) -> None:
         super().__init__(
             f"Forager call '{endpoint}' needs up to {cost} credits but only {remaining} "
-            f"remain in this run's budget. Raise --max-credits to allow it."
+            f"remain in this run's budget (raise --max-credits for the CLI, or "
+            f"WEBHOOK_MAX_CREDITS_PER_EVENT / _PER_DAY for webhooks)."
         )
         self.endpoint = endpoint
         self.cost = cost
